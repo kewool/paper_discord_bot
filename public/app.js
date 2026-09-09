@@ -313,7 +313,7 @@
   function reading(a) {
     const translated =
       state.translation && state.translation.status !== "disabled";
-    reader.innerHTML = `<div class="reader-shell"><div class="reading-bar"><h2>${esc(a.paperTitle)}</h2><strong id="timer" class="timer" aria-label="남은 열람 시간"></strong></div><div class="paper-frame concealed" id="paper-frame"><div class="paper-columns"><section class="paper-panel"><h3>원문</h3><div class="paper-surface" id="paper-surface"><canvas id="paper-canvas"></canvas><div id="loading" class="muted">불러오는 중…</div></div></section>${translated ? '<section class="paper-panel translation-panel"><h3>한국어</h3><div id="translation-pages" class="translation-pages"></div><div id="translation-status" class="muted">불러오는 중…</div></section>' : ""}</div><div id="focus-cover" role="status">불러오는 중…</div></div><div class="reader-controls"><button id="prev" class="btn secondary">← 이전</button><span id="count" class="page-count"></span><button id="next" class="btn secondary">다음 →</button><button id="finish" class="btn coral">읽기 종료</button></div></div>`;
+    reader.innerHTML = `<div class="reader-shell"><div class="reading-bar"><h2>${esc(a.paperTitle)}</h2><strong id="timer" class="timer" aria-label="남은 열람 시간"></strong></div><div class="paper-frame concealed" id="paper-frame"><div class="paper-columns"><section class="paper-panel"><h3>원문</h3><div class="paper-surface" id="paper-surface"><canvas id="paper-canvas"></canvas><div id="loading" class="muted">불러오는 중…</div></div></section>${translated ? '<section class="paper-panel translation-panel"><h3>한국어 <span id="translation-meta" class="translation-meta"></span></h3><div id="translation-pages" class="translation-pages"></div><div id="translation-status" class="muted">불러오는 중…</div></section>' : ""}</div><div id="focus-cover" role="status">불러오는 중…</div></div><div class="reader-controls"><button id="prev" class="btn secondary">← 이전</button><span id="count" class="page-count"></span><button id="next" class="btn secondary">다음 →</button><button id="finish" class="btn coral">읽기 종료</button></div></div>`;
     pages = Number(a.pageCount) || 1;
     const zoomControls = document.createElement("div");
     zoomControls.className = "reader-zoom";
@@ -392,7 +392,7 @@
       $("#paper-frame").classList.remove("concealed");
       $("#focus-cover").hidden = true;
       $("#loading").classList.add("hidden");
-      $("#count").textContent = `${page} / ${pages}`;
+      $("#count").textContent = `원문 ${page} / ${pages}`;
       $("#prev").disabled = page <= 1;
       $("#next").disabled = page >= pages;
       if (translationEnabled)
@@ -473,6 +473,8 @@
       translationBitmaps = images;
       committed = true;
       host.scrollTop = 0;
+      const meta = $("#translation-meta");
+      if (meta) meta.textContent = `· ${total}쪽`;
       $("#translation-status")?.classList.add("hidden");
     } catch (e) {
       canvases.forEach((c) => {
@@ -536,6 +538,7 @@
     $("#paper-frame")?.classList.add("concealed");
     $("#translation-status")?.classList.remove("hidden");
     $("#translation-pages")?.replaceChildren();
+    if ($("#translation-meta")) $("#translation-meta").textContent = "";
     if ($("#translation-pages")) $("#translation-pages").scrollTop = 0;
     if ($("#paper-surface")) $("#paper-surface").scrollTop = 0;
     $("#loading")?.classList.remove("hidden");
@@ -561,12 +564,7 @@
     const left = a.submitBy - (state.serverNow + (performance.now() - sync));
     const expired = left <= 0,
       done = ["queued", "grading", "graded", "failed"].includes(a.phase);
-    const discordUrl = /^https:\/\/discord\.com\/channels\/\d+\/\d+$/.test(
-      state.discordUrl || "",
-    )
-      ? state.discordUrl
-      : null;
-    reader.innerHTML = `<div id="discord-handoff" class="status-card card"><h1>${expired && !done ? "제출 마감" : "열람 종료"}</h1>${done ? "<p>Discord <strong>/my-score</strong>에서 결과를 확인해 주세요.</p>" : expired ? "" : '<p>Discord <strong>/submit</strong>으로 제출해 주세요.</p><strong id="timer" class="timer"></strong>'}${discordUrl ? '<br><br><a class="btn coral" target="_blank" rel="noopener noreferrer" href="' + esc(discordUrl) + '">디스코드로 돌아가기 ↗</a>' : ""}</div>`;
+    reader.innerHTML = `<div id="discord-handoff" class="status-card card"><h1>${expired && !done ? "제출 마감" : "열람 종료"}</h1>${done ? "<p>Discord <strong>/my-score</strong>에서 결과를 확인해 주세요.</p>" : expired ? "" : '<p>Discord <strong>/submit</strong>으로 제출해 주세요.</p><strong id="timer" class="timer"></strong>'}</div>`;
   }
   function tick() {
     if (focused && (!document.hasFocus() || document.hidden)) conceal();

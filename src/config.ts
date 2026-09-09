@@ -111,14 +111,14 @@ export function loadConfig(env = process.env): Config {
     writingMinutes: integer("WRITING_MINUTES", 20, 1, 180),
     releaseHour: integer("DAILY_RELEASE_HOUR", 9, 0, 23),
     timeZone,
-    model: env.CODEX_MODEL || "gpt-5.6-terra",
-    codexTimeoutMs: integer("CODEX_TIMEOUT_SECONDS", 180, 15, 600) * 1000,
+    model: env.CODEX_MODEL || "gpt-6-astra",
+    codexTimeoutMs: integer("CODEX_TIMEOUT_SECONDS", 300, 15, 900) * 1000,
     translation: {
       enabled:
         env.TRANSLATION_ENABLED !== "false" &&
         (!demo || env.TRANSLATION_ENABLED === "true"),
-      model: env.TRANSLATION_MODEL || env.CODEX_MODEL || "gpt-5.6-terra",
-      timeoutMs: integer("TRANSLATION_TIMEOUT_SECONDS", 300, 30, 900) * 1000,
+      model: env.TRANSLATION_MODEL || env.CODEX_MODEL || "gpt-6-astra",
+      timeoutMs: integer("TRANSLATION_TIMEOUT_SECONDS", 900, 30, 1800) * 1000,
     },
     trustProxy: integer("TRUST_PROXY_HOPS", 0, 0, 5),
     paperSelection: {

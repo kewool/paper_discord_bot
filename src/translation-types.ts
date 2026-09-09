@@ -1,6 +1,14 @@
 import { z } from "zod";
 
-export const TRANSLATION_VERSION = "ko-v1";
+export const TRANSLATION_VERSION = "ko-v2";
+export const sourceRegionSchema = z
+  .object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().gt(0).max(1),
+    height: z.number().gt(0).max(1),
+  })
+  .strict();
 export const translationBlockSchema = z
   .object({
     kind: z.enum([
@@ -10,9 +18,11 @@ export const translationBlockSchema = z
       "equation",
       "table",
       "reference",
+      "figure",
     ]),
     text: z.string().max(12000),
     rows: z.array(z.array(z.string().max(1200)).min(1).max(12)).max(100),
+    sourceRegion: sourceRegionSchema.nullable().optional(),
   })
   .strict();
 export type TranslationBlock = z.infer<typeof translationBlockSchema>;
@@ -35,6 +45,31 @@ export const translationPageSchema = z
   })
   .strict();
 export type TranslationPage = z.infer<typeof translationPageSchema>;
+
+// New model responses include every key; older stored pages may omit sourceRegion.
+const outputPageSchema = translationPageSchema.extend({
+  blocks: z
+    .array(
+      translationBlockSchema.extend({
+        sourceRegion: sourceRegionSchema.nullable(),
+      }),
+    )
+    .min(1)
+    .max(180),
+});
+export const paperTranslationSchema = z
+  .object({
+    complete: z.boolean(),
+    pages: z.array(outputPageSchema).min(1).max(40),
+  })
+  .strict();
+export type TranslatedPaper = z.infer<typeof paperTranslationSchema>;
+export const translationReviewSchema = z
+  .object({
+    verified: z.boolean(),
+    corrections: z.array(outputPageSchema).max(40),
+  })
+  .strict();
 export interface TranslationState {
   status: "disabled" | "pending" | "translating" | "ready" | "failed";
   readyPages: number;
@@ -53,4 +88,6 @@ export interface PaperTranslation {
   leaseUntil: number;
   updatedAt: number;
   error: string | null;
+  draftJson?: string;
+  verifiedJson?: string;
 }

@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { readFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
-import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PaperInput } from "./types.js";
 import { TRANSLATION_VERSION } from "./translation-types.js";
+import { KOREAN_FONT } from "./fonts.js";
 
 const MAX_PDF_BYTES = 40 * 1024 * 1024;
 const MAX_PAGES = 40;
@@ -15,11 +16,6 @@ const MAX_RENDER_EDGE = 1_600;
 const MAX_RENDER_PIXELS = 2_500_000;
 const require = createRequire(import.meta.url);
 const pdfjsRoot = dirname(require.resolve("pdfjs-dist/package.json"));
-const sansFont = GlobalFonts.has("Arial")
-  ? "Arial"
-  : GlobalFonts.has("DejaVu Sans")
-    ? "DejaVu Sans"
-    : "sans-serif";
 
 function inside(root: string, target: string): boolean {
   const rel = relative(resolve(root), resolve(target));
@@ -195,7 +191,7 @@ export async function renderPage(
   paper: PaperInput,
   page: number,
   watermark: string,
-  translation?: { artifactId: string; part: number },
+  translation?: { artifactId: string; part: number; version?: string },
 ): Promise<Buffer> {
   if (!Number.isInteger(page) || page < 1 || page > paper.pageCount)
     throw new Error("요청한 페이지 번호가 올바르지 않습니다.");
@@ -207,13 +203,16 @@ export async function renderPage(
     (!/^[a-f0-9-]{36}$/.test(translation.artifactId) ||
       !Number.isInteger(translation.part) ||
       translation.part < 1 ||
-      translation.part > 32)
+      translation.part > 32 ||
+      !["ko-v1", TRANSLATION_VERSION].includes(
+        translation.version ?? TRANSLATION_VERSION,
+      ))
   )
     throw new Error("번역 페이지 정보가 올바르지 않습니다.");
   const imagePath = translation
     ? resolve(
         directory,
-        TRANSLATION_VERSION,
+        translation.version ?? TRANSLATION_VERSION,
         translation.artifactId,
         `page-${page}-${translation.part}.png`,
       )
@@ -238,7 +237,7 @@ export async function renderPage(
   context.clip();
   context.globalAlpha = 0.13;
   context.fillStyle = "#703c32";
-  context.font = `18px "${sansFont}"`;
+  context.font = `18px "${KOREAN_FONT}"`;
   context.textAlign = "center";
   context.translate(source.width / 2, source.height / 2);
   context.rotate(-Math.PI / 8);
@@ -250,7 +249,7 @@ export async function renderPage(
   context.fillStyle = "rgba(20, 20, 20, 0.82)";
   context.fillRect(0, source.height, source.width, 26);
   context.fillStyle = "#ffffff";
-  context.font = `11px "${sansFont}"`;
+  context.font = `11px "${KOREAN_FONT}"`;
   context.fillText(
     [paper.sourceUrl, paper.license, translation ? "번역" : ""]
       .filter(Boolean)

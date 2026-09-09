@@ -18,6 +18,20 @@
     display: none !important;
   }
 }
+@font-face {
+  font-family: "Paper League Korean";
+  src: url("/fonts/NanumGothic-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Paper League Korean";
+  src: url("/fonts/NanumGothic-Bold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
 :root {
   --navy: #16263d;
   --ink: #1e2b36;
@@ -39,7 +53,7 @@ body {
   margin: 0;
   background: var(--cream);
   color: var(--ink);
-  font-family: "Segoe UI", "Malgun Gothic", sans-serif;
+  font-family: "Paper League Korean", sans-serif;
 }
 a {
   color: inherit;
@@ -350,6 +364,10 @@ h2 {
   color: var(--navy);
   font-size: 14px;
   border-bottom: 1px solid var(--line);
+}
+.translation-meta {
+  color: var(--muted);
+  font-weight: 400;
 }
 .paper-surface,
 .translation-pages {

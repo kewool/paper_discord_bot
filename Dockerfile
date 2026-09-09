@@ -27,6 +27,11 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist/src ./dist/src
 COPY --from=build /app/dist/scripts/admin.js /app/dist/scripts/import-paper.js /app/dist/scripts/register-commands.js /app/dist/scripts/sync-arxiv.js ./dist/scripts/
 COPY public ./public
+# Korean canvas rendering uses the bundled Nanum Gothic files in public/fonts.
+# Keep the assets in the runtime image instead of relying on a distribution font.
+RUN test -s /app/public/fonts/NanumGothic-Regular.ttf \
+    && test -s /app/public/fonts/NanumGothic-Bold.ttf \
+    && node -e "import('./dist/src/fonts.js').then(({ KOREAN_FONT }) => import('@napi-rs/canvas').then(({ GlobalFonts }) => { if (!GlobalFonts.has(KOREAN_FONT)) throw new Error('Bundled Korean font registration failed'); }))"
 RUN mkdir -p /app/data /home/node/.codex \
     && chown node:node /app/data /home/node/.codex \
     && chmod 700 /home/node/.codex

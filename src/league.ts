@@ -9,6 +9,7 @@ import {
   type PublicationMetadata,
 } from "./paper-selection.js";
 import {
+  GRADING_VERSION,
   type AppState,
   type Attempt,
   type AttemptView,
@@ -50,7 +51,26 @@ export class League {
     const window = roundWindow(this.now(), this.config);
     return this.store.transaction(() => {
       const existing = this.store.getRound(window.day);
-      if (existing) return existing;
+      if (existing) {
+        // Once anyone participates, every submission keeps the same model and rubric.
+        if (
+          (existing.model !== this.config.model ||
+            existing.rubricVersion !== GRADING_VERSION) &&
+          !this.store.get(
+            "SELECT 1 FROM attempts WHERE roundId=? LIMIT 1",
+            existing.id,
+          )
+        ) {
+          this.store.run(
+            "UPDATE rounds SET model=?,rubricVersion=? WHERE id=?",
+            this.config.model,
+            GRADING_VERSION,
+            existing.id,
+          );
+          return this.store.getRound(existing.id)!;
+        }
+        return existing;
+      }
       const papers = this.store.all<{ id: string } & PublicationMetadata>(
         `SELECT p.id,ai.journalRef,ai.comment FROM papers p
          LEFT JOIN arxivImports ai ON ai.arxivId=(
@@ -82,7 +102,7 @@ export class League {
         readingMinutes: this.config.readingMinutes,
         writingMinutes: this.config.writingMinutes,
         model: this.config.model,
-        rubricVersion: "paper-league-v1",
+        rubricVersion: GRADING_VERSION,
       };
       this.store.run(
         "INSERT INTO rounds VALUES (?,?,?,?,?,?,?,?,?)",

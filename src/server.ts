@@ -182,8 +182,9 @@ export function createApp(league: League, config: Config) {
       const translation = league.store.get<{
         partCount: number;
         artifactId: string;
+        version: string;
       }>(
-        `SELECT tp.partCount,tp.artifactId FROM translatedPages tp JOIN paperTranslations t ON t.paperId=tp.paperId
+        `SELECT tp.partCount,tp.artifactId,t.version FROM translatedPages tp JOIN paperTranslations t ON t.paperId=tp.paperId
        WHERE tp.paperId=? AND tp.page=? AND t.status='ready'`,
         paper.id,
         page,
@@ -195,6 +196,7 @@ export function createApp(league: League, config: Config) {
       const png = await renderPage(paper, page, stamp, {
         artifactId: translation.artifactId,
         part,
+        version: translation.version,
       });
       const fresh = league.readable(userId);
       if (fresh.attempt.id !== attempt.id)

@@ -91,6 +91,8 @@ export class Store {
         ["accessTokens", "guildId"],
         ["sessions", "channelId"],
         ["accessTokens", "channelId"],
+        ["paperTranslations", "draftJson"],
+        ["paperTranslations", "verifiedJson"],
       ]) {
         if (
           !this.all<{ name: string }>(`PRAGMA table_info(${table})`).some(
@@ -101,7 +103,15 @@ export class Store {
             `ALTER TABLE ${table} ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`,
           );
       }
-      this.db.exec("PRAGMA user_version=5");
+      if (
+        !this.all<{ name: string }>("PRAGMA table_info(translatedPages)").some(
+          (c) => c.name === "renderVersion",
+        )
+      )
+        this.db.exec(
+          "ALTER TABLE translatedPages ADD COLUMN renderVersion INTEGER NOT NULL DEFAULT 1",
+        );
+      this.db.exec("PRAGMA user_version=6");
     });
   }
   get<T>(sql: string, ...args: SQLInputValue[]): T | undefined {

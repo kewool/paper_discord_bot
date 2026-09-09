@@ -16,6 +16,9 @@ import {
   retryTranslation,
   saveTranslationPage,
   translationState,
+  validatePaperTranslation,
+  applyTranslationReview,
+  rerenderTranslations,
 } from "../src/translation.js";
 import type { TranslationPage } from "../src/translation-types.js";
 
@@ -62,6 +65,47 @@ test("translation resumes saved pages, waits before timing, and serves only prot
       ],
     });
     const first = claimTranslation(store, config)!;
+    const wholePaper = validatePaperTranslation(
+      {
+        complete: true,
+        pages: [1, 2, 3].map((page) => ({
+          ...translated(page),
+          blocks: translated(page).blocks.map((block) => ({
+            ...block,
+            sourceRegion: null,
+          })),
+        })),
+      },
+      paper,
+    );
+    assert.throws(
+      () =>
+        validatePaperTranslation(
+          { ...wholePaper, pages: wholePaper.pages.slice(0, 2) },
+          paper,
+        ),
+      /전체 번역/,
+    );
+    assert.throws(
+      () =>
+        applyTranslationReview(
+          { verified: false, corrections: [] },
+          wholePaper,
+          paper,
+        ),
+      /검수/,
+    );
+    const verified = applyTranslationReview(
+      { verified: true, corrections: [] },
+      wholePaper,
+      paper,
+    );
+    store.run(
+      "UPDATE paperTranslations SET draftJson=?,verifiedJson=? WHERE paperId=?",
+      JSON.stringify(wholePaper),
+      JSON.stringify(verified),
+      paper.id,
+    );
     assert.equal(
       claimTranslation(store, config),
       null,
@@ -81,6 +125,11 @@ test("translation resumes saved pages, waits before timing, and serves only prot
     queueTranslations(store, config);
     const second = claimTranslation(store, config)!;
     assert.equal(second.completedPages, 1, "restart resumes from page 2");
+    assert.deepEqual(
+      JSON.parse(second.verifiedJson!),
+      verified,
+      "restart preserves the complete verified translation",
+    );
     store.run(
       "UPDATE paperTranslations SET leaseUntil=0 WHERE paperId=?",
       paper.id,
@@ -120,6 +169,22 @@ test("translation resumes saved pages, waits before timing, and serves only prot
       0,
       "ready translations are shared and reused",
     );
+    store.run(
+      "UPDATE paperTranslations SET version='ko-v1' WHERE paperId=?",
+      paper.id,
+    );
+    store.run(
+      "UPDATE translatedPages SET renderVersion=1 WHERE paperId=?",
+      paper.id,
+    );
+    assert.equal(translationState(store, paper.id, true).status, "pending");
+    assert.throws(() => league.start(user), /아직 제한시간은 시작되지/);
+    assert.equal(
+      await rerenderTranslations(store),
+      3,
+      "rebuild old PNGs from stored text without a model call",
+    );
+    assert.equal(translationState(store, paper.id, true).status, "ready");
     const app = createApp(league, config);
     server = await new Promise<Server>((done) => {
       const listener = app.listen(0, "127.0.0.1", () => done(listener));

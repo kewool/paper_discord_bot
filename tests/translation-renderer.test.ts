@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { renderTranslationPages } from "../src/translation-renderer.js";
 
 test("renders Korean prose, TeX, and a table into bounded PNG sheets", async () => {
@@ -44,4 +45,31 @@ test("continues long translated prose onto another sheet", async () => {
     { title: "페이지 분할", page: 2, pageCount: 5 },
   );
   assert.ok(pages.length > 1);
+});
+
+test("copies a requested original figure region into the translated sheet", async () => {
+  const source = createCanvas(400, 300);
+  const sourceContext = source.getContext("2d");
+  sourceContext.fillStyle = "#ffffff";
+  sourceContext.fillRect(0, 0, 400, 300);
+  sourceContext.fillStyle = "#00c853";
+  sourceContext.fillRect(200, 60, 120, 120);
+  const pages = await renderTranslationPages(
+    [
+      {
+        kind: "figure",
+        text: "그림 1. 원문 도표",
+        rows: [],
+        sourceRegion: { x: 0.5, y: 0.2, width: 0.3, height: 0.4 },
+      },
+    ],
+    { title: "그림 보존", page: 1, pageCount: 1 },
+    source.toBuffer("image/png"),
+  );
+  const rendered = await loadImage(pages[0]);
+  const output = createCanvas(rendered.width, rendered.height);
+  const outputContext = output.getContext("2d");
+  outputContext.drawImage(rendered, 0, 0);
+  const pixel = outputContext.getImageData(128, 176, 1, 1).data;
+  assert.ok(pixel[1] > 150 && pixel[0] < 40 && pixel[2] < 120);
 });

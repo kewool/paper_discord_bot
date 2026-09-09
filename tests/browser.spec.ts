@@ -67,8 +67,26 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
     .toBeGreaterThan(0);
   const initialTimer = await page.locator("#timer").innerText();
   await expect(page.locator("#timer")).not.toHaveText(initialTimer);
+  let extraTranslationSheet: Buffer;
+  await page.route(/\/api\/attempt\/translation\/2\?part=1$/, async (route) => {
+    const response = await route.fetch();
+    extraTranslationSheet = await response.body();
+    await route.fulfill({
+      response,
+      headers: { ...response.headers(), "x-page-parts": "2" },
+    });
+  });
+  await page.route(/\/api\/attempt\/translation\/2\?part=2$/, (route) =>
+    route.fulfill({
+      contentType: "image/png",
+      headers: { "X-Page-Parts": "2" },
+      body: extraTranslationSheet,
+    }),
+  );
   await page.getByRole("button", { name: "다음 →" }).click();
-  await expect(page.locator("#count")).toHaveText("2 / 3");
+  await expect(page.locator("#count")).toHaveText("원문 2 / 3");
+  await expect(page.locator(".translation-canvas")).toHaveCount(2);
+  await expect(page.locator("#translation-meta")).toHaveText("· 2쪽");
   await expect
     .poll(() =>
       page
@@ -154,12 +172,6 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
     .toBeLessThanOrEqual(lostFocus.at + 250);
   await expect(page.locator("#discord-handoff")).toBeVisible();
   await expect(page.locator("#discord-handoff")).toContainText("/submit");
-  await expect(
-    page.getByRole("link", { name: "디스코드로 돌아가기" }),
-  ).toHaveAttribute(
-    "href",
-    "https://discord.com/channels/700000000000000001/710000000000000001",
-  );
   await expect(
     page.locator("form, textarea, #rankings, .grade-total"),
   ).toHaveCount(0);

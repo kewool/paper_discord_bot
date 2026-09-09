@@ -1,7 +1,12 @@
 import { loadConfig } from "../src/config.js";
 import { Store } from "../src/store.js";
 import { resetPapers, resetUser } from "../src/maintenance.js";
-import { queueTranslations, retryTranslation } from "../src/translation.js";
+import {
+  queueTranslations,
+  retryTranslation,
+  retranslatePapers,
+  rerenderTranslations,
+} from "../src/translation.js";
 import {
   classifyPublication,
   type PublicationMetadata,
@@ -45,7 +50,7 @@ try {
   } else if (command === "translations") {
     console.table(
       store.all(`SELECT p.id,p.title,t.status,t.completedPages AS readyPages,
-      p.pageCount,t.model,t.attempts,t.error FROM papers p
+      p.pageCount,t.model,t.version,t.attempts,t.error FROM papers p
       LEFT JOIN paperTranslations t ON t.paperId=p.id ORDER BY p.createdAt`),
     );
   } else if (command === "retry-translation" && id && args.length === 1) {
@@ -58,6 +63,22 @@ try {
       );
     console.log(
       "저장된 번역 페이지를 유지하고 남은 페이지부터 다시 처리합니다.",
+    );
+  } else if (command === "rerender-translations" && args.length === 0) {
+    console.log(
+      `번역 이미지 ${await rerenderTranslations(store)}쪽의 글꼴을 갱신했습니다.`,
+    );
+  } else if (command === "retranslate" && id) {
+    if (args.length > 2 || (args[1] && args[1] !== "--yes"))
+      throw new Error(
+        "사용법: node dist/scripts/admin.js retranslate <논문 ID|all> [--yes]",
+      );
+    const apply = args[1] === "--yes";
+    console.table(retranslatePapers(store, config, id, apply));
+    console.log(
+      apply
+        ? `전체 번역과 원문 대조를 다시 대기열에 넣었습니다. 모델: ${config.translation.model}`
+        : "미리보기입니다. --yes를 붙이면 기존 번역을 교체합니다. 논문 원본·참여·점수는 유지합니다.",
     );
   } else if (command === "users") {
     console.table(
@@ -134,7 +155,7 @@ try {
     );
   } else
     throw new Error(
-      "사용법: node dist/scripts/admin.js status | papers | translations | users | retry <제출 ID> | retry-translation <논문 ID> | reset-user <사용자 ID> [--yes] | reset-papers [--yes]",
+      "사용법: node dist/scripts/admin.js status | papers | translations | users | retry <제출 ID> | retry-translation <논문 ID> | rerender-translations | retranslate <논문 ID|all> [--yes] | reset-user <사용자 ID> [--yes] | reset-papers [--yes]",
     );
 } catch (error) {
   console.error(error instanceof Error ? error.message : "관리 작업 실패");

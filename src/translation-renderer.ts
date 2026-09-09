@@ -1,4 +1,4 @@
-import { createCanvas, GlobalFonts, loadImage } from "@napi-rs/canvas";
+import { createCanvas, loadImage, type Canvas } from "@napi-rs/canvas";
 import { mathjax } from "@mathjax/src/js/mathjax.js";
 import { TeX } from "@mathjax/src/js/input/tex.js";
 import "@mathjax/src/js/input/tex/ams/AmsConfiguration.js";
@@ -6,11 +6,13 @@ import { SVG } from "@mathjax/src/js/output/svg.js";
 import { liteAdaptor } from "@mathjax/src/js/adaptors/liteAdaptor.js";
 import { RegisterHTMLHandler } from "@mathjax/src/js/handlers/html.js";
 import type { LiteElement } from "@mathjax/src/js/adaptors/lite/Element.js";
+import { KOREAN_FONT } from "./fonts.js";
 import type { TranslationBlock } from "./translation-types.js";
 
 const WIDTH = 1200;
 const HEIGHT = 1600;
 const MAX_PIXELS = 2_500_000;
+const MAX_SOURCE_EDGE = 1_600;
 const MARGIN = 64;
 const HEADER = 112;
 const FOOTER = 48;
@@ -19,13 +21,7 @@ const MAX_BLOCKS = 180;
 const MAX_TOTAL_CHARS = 180_000;
 const MAX_MATH_CHARS = 4_000;
 const MAX_MATH_MACROS = 80;
-const FONT = GlobalFonts.has("Malgun Gothic")
-  ? "Malgun Gothic"
-  : GlobalFonts.has("Noto Sans CJK KR")
-    ? "Noto Sans CJK KR"
-    : GlobalFonts.has("Noto Sans KR")
-      ? "Noto Sans KR"
-      : "sans-serif";
+const FONT = KOREAN_FONT;
 
 type Context = ReturnType<ReturnType<typeof createCanvas>["getContext"]>;
 type LineRun = {
@@ -37,6 +33,10 @@ type LineRun = {
   break?: boolean;
 };
 type Line = { runs: LineRun[]; height: number };
+type SourceRegion = { x: number; y: number; width: number; height: number };
+type FigureBlock = TranslationBlock & {
+  sourceRegion?: SourceRegion | null;
+};
 
 let mathDocument: ReturnType<typeof mathjax.document> | undefined;
 let mathAdaptor: ReturnType<typeof liteAdaptor> | undefined;
@@ -290,11 +290,13 @@ function validate(
         "equation",
         "table",
         "reference",
+        "figure",
       ].includes(block.kind)
     )
       throw new Error("번역 블록 종류가 올바르지 않습니다.");
     const blockText = boundedText(block.text, "번역 블록", 12_000);
-    if (!blockText && block.kind !== "table")
+    const isFigure = (block as { kind: string }).kind === "figure";
+    if (!blockText && block.kind !== "table" && !isFigure)
       throw new Error("번역 블록이 비어 있습니다.");
     total += blockText.length;
     if (block.kind === "table") {
@@ -311,6 +313,24 @@ function validate(
           total += boundedText(cell, "표 셀", 1_200).length;
       }
     }
+    if (isFigure) {
+      if (!Array.isArray(block.rows) || block.rows.length)
+        throw new Error("그림 블록 행은 비어 있어야 합니다.");
+      const region = (block as FigureBlock).sourceRegion;
+      if (
+        !region ||
+        ![region.x, region.y, region.width, region.height].every(
+          Number.isFinite,
+        ) ||
+        region.x < 0 ||
+        region.y < 0 ||
+        region.width <= 0 ||
+        region.height <= 0 ||
+        region.x + region.width > 1 ||
+        region.y + region.height > 1
+      )
+        throw new Error("그림 원문 영역이 올바르지 않습니다.");
+    }
   }
   if (total > MAX_TOTAL_CHARS) throw new Error("번역 페이지가 너무 큽니다.");
 }
@@ -319,15 +339,32 @@ function validate(
 export async function renderTranslationPages(
   blocks: readonly TranslationBlock[],
   meta: { title: string; page: number; pageCount: number },
+  sourcePageImage?: Buffer,
 ): Promise<Buffer[]> {
   validate(blocks, meta);
   if (WIDTH * HEIGHT > MAX_PIXELS)
     throw new Error("렌더링 캔버스 크기가 허용 범위를 벗어났습니다.");
-  const sheets: Buffer[] = [];
+  const hasFigure = blocks.some(
+    (block) => (block as { kind: string }).kind === "figure",
+  );
+  let sourceImage: Awaited<ReturnType<typeof loadImage>> | undefined;
+  if (hasFigure) {
+    if (!sourcePageImage?.length)
+      throw new Error("그림 번역에는 원문 페이지 이미지가 필요합니다.");
+    sourceImage = await loadImage(sourcePageImage);
+    if (
+      sourceImage.width < 1 ||
+      sourceImage.height < 1 ||
+      sourceImage.width > MAX_SOURCE_EDGE ||
+      sourceImage.height > MAX_SOURCE_EDGE ||
+      sourceImage.width * sourceImage.height > MAX_PIXELS
+    )
+      throw new Error("원문 페이지 이미지가 허용 범위를 벗어났습니다.");
+  }
+  const sheetCanvases: Canvas[] = [];
   let canvas = createCanvas(WIDTH, HEIGHT);
   let ctx = canvas.getContext("2d");
   let y = HEADER;
-  let sheetNumber = 1;
   const startSheet = () => {
     canvas = createCanvas(WIDTH, HEIGHT);
     ctx = canvas.getContext("2d");
@@ -341,12 +378,6 @@ export async function renderTranslationPages(
     ctx.fillText(meta.title, MARGIN, 40, WIDTH - MARGIN * 2);
     setFont(ctx, 15);
     ctx.fillStyle = "#627080";
-    const continuation = sheetNumber > 1 ? ` · 이어짐 ${sheetNumber}` : "";
-    ctx.fillText(
-      `원문 ${meta.page} / ${meta.pageCount} · 한국어 번역${continuation}`,
-      MARGIN,
-      71,
-    );
     ctx.strokeStyle = "#d8dee5";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -355,20 +386,12 @@ export async function renderTranslationPages(
     ctx.stroke();
   };
   const finishSheet = () => {
-    if (sheets.length >= 32)
+    if (sheetCanvases.length >= 32)
       throw new Error("번역 결과가 최대 32장을 초과합니다.");
-    setFont(ctx, 13);
-    ctx.fillStyle = "#788493";
-    ctx.fillText(
-      `원문 ${meta.page} / ${meta.pageCount} · 한국어 번역`,
-      MARGIN,
-      HEIGHT - 20,
-    );
-    sheets.push(canvas.toBuffer("image/png"));
-    sheetNumber += 1;
+    sheetCanvases.push(canvas);
   };
   const next = () => {
-    if (sheets.length >= 31)
+    if (sheetCanvases.length >= 31)
       throw new Error("번역 결과가 최대 32장을 초과합니다.");
     finishSheet();
     startSheet();
@@ -380,6 +403,60 @@ export async function renderTranslationPages(
 
   for (const block of blocks) {
     const text = boundedText(block.text, "번역 블록", 12_000);
+    if ((block as { kind: string }).kind === "figure") {
+      const region = (block as FigureBlock).sourceRegion!;
+      const caption = text
+        ? await makeLines(ctx, text, 21, WIDTH - MARGIN * 2)
+        : [];
+      const captionHeight =
+        caption.reduce((sum, line) => sum + line.height, 0) +
+        (caption.length ? 18 : 0);
+      const bodyHeight = BODY_BOTTOM - HEADER;
+      // Keep a normal caption with its figure when both fit on one sheet.  A
+      // pathological caption still flows intact after the image instead of
+      // making the source crop disappear or shrink to nothing.
+      const reservedCaption =
+        captionHeight <= bodyHeight / 2 ? captionHeight : 0;
+      const sourceX = Math.floor(region.x * sourceImage!.width);
+      const sourceY = Math.floor(region.y * sourceImage!.height);
+      const sourceWidth = Math.min(
+        sourceImage!.width - sourceX,
+        Math.max(1, Math.ceil(region.width * sourceImage!.width)),
+      );
+      const sourceHeight = Math.min(
+        sourceImage!.height - sourceY,
+        Math.max(1, Math.ceil(region.height * sourceImage!.height)),
+      );
+      const scale = Math.min(
+        (WIDTH - MARGIN * 2) / sourceWidth,
+        (bodyHeight - reservedCaption) / sourceHeight,
+      );
+      const renderedWidth = Math.max(1, Math.floor(sourceWidth * scale));
+      const renderedHeight = Math.max(1, Math.floor(sourceHeight * scale));
+      ensure(renderedHeight + reservedCaption);
+      ctx.drawImage(
+        sourceImage!,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        (WIDTH - renderedWidth) / 2,
+        y,
+        renderedWidth,
+        renderedHeight,
+      );
+      y += renderedHeight;
+      if (caption.length) {
+        y += 6;
+        for (const line of caption) {
+          ensure(line.height);
+          drawLine(ctx, line, MARGIN, y, 21, "#596775");
+          y += line.height;
+        }
+        y += 12;
+      }
+      continue;
+    }
     if (block.kind === "equation") {
       const run = await mathRun(text, 30, true, WIDTH - MARGIN * 2);
       if (run.fallback) {
@@ -522,5 +599,17 @@ export async function renderTranslationPages(
     y += style.after;
   }
   finishSheet();
-  return sheets;
+  return sheetCanvases.map((sheet, index) => {
+    const sheetCtx = sheet.getContext("2d");
+    sheetCtx.fillStyle = "#fffefd";
+    sheetCtx.fillRect(MARGIN, 50, WIDTH - MARGIN * 2, 36);
+    setFont(sheetCtx, 15);
+    sheetCtx.fillStyle = "#627080";
+    sheetCtx.fillText(
+      `원문 ${meta.page}/${meta.pageCount} · 한국어 ${index + 1}/${sheetCanvases.length}쪽`,
+      MARGIN,
+      71,
+    );
+    return sheet.toBuffer("image/png");
+  });
 }

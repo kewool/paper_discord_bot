@@ -1,5 +1,7 @@
 import type { TranslationState } from "./translation-types.js";
 
+export const GRADING_VERSION = "paper-league-v2";
+
 export const RUBRIC = [
   { key: "understanding", label: "문제와 핵심 기여", max: 25 },
   { key: "methodology", label: "방법론 이해", max: 25 },
@@ -9,7 +11,16 @@ export const RUBRIC = [
 ] as const;
 export type RubricKey = (typeof RUBRIC)[number]["key"];
 export interface Grade {
-  criteria: { key: RubricKey; score: number; feedback: string }[];
+  criteria: {
+    key: RubricKey;
+    score: number;
+    feedback: string;
+    evidence?: {
+      page: number;
+      location: string;
+      relation: "supported" | "contradicted" | "omitted" | "unverifiable";
+    }[];
+  }[];
   strengths: string[];
   improvements: string[];
   overall: string;
