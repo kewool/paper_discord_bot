@@ -1,7 +1,14 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Attempt, Paper, PaperInput, Round, User } from "./types.js";
+import type {
+  Attempt,
+  GuildSettings,
+  Paper,
+  PaperInput,
+  Round,
+  User,
+} from "./types.js";
 
 export class Store {
   readonly db: DatabaseSync;
@@ -31,15 +38,26 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS attempts_queue ON attempts(gradingStatus,nextGradeAt);
       CREATE TABLE IF NOT EXISTS sessions (
-        tokenHash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id), csrfToken TEXT NOT NULL, expiresAt INTEGER NOT NULL, roundId TEXT NOT NULL
+        tokenHash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id), csrfToken TEXT NOT NULL, expiresAt INTEGER NOT NULL, roundId TEXT NOT NULL,
+        guildId TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS accessTokens (
         tokenHash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id), roundId TEXT NOT NULL REFERENCES rounds(id),
-        expiresAt INTEGER NOT NULL, usedAt INTEGER
+        expiresAt INTEGER NOT NULL, usedAt INTEGER, guildId TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS announcements (
         roundId TEXT PRIMARY KEY REFERENCES rounds(id), status TEXT NOT NULL,
         updatedAt INTEGER NOT NULL, messageId TEXT
+      );
+      CREATE TABLE IF NOT EXISTS guildSettings (
+        guildId TEXT PRIMARY KEY, channelId TEXT NOT NULL,
+        allowedRoleId TEXT NOT NULL DEFAULT '', updatedAt INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS guildAnnouncements (
+        guildId TEXT NOT NULL REFERENCES guildSettings(guildId),
+        roundId TEXT NOT NULL REFERENCES rounds(id), channelId TEXT NOT NULL,
+        status TEXT NOT NULL, updatedAt INTEGER NOT NULL, messageId TEXT,
+        PRIMARY KEY(guildId,roundId,channelId)
       );
       CREATE TABLE IF NOT EXISTS arxivImports (
         arxivId TEXT PRIMARY KEY, paperId TEXT REFERENCES papers(id), category TEXT NOT NULL,
@@ -52,17 +70,24 @@ export class Store {
       CREATE TABLE IF NOT EXISTS sourceLocks (
         name TEXT PRIMARY KEY, owner TEXT NOT NULL, expiresAt INTEGER NOT NULL
       );
-      PRAGMA user_version=2;
     `);
-    if (
-      !this.all<{ name: string }>("PRAGMA table_info(sessions)").some(
-        (c) => c.name === "roundId",
-      )
-    ) {
-      this.db.exec(
-        "ALTER TABLE sessions ADD COLUMN roundId TEXT NOT NULL DEFAULT ''",
-      );
-    }
+    this.transaction(() => {
+      for (const [table, column] of [
+        ["sessions", "roundId"],
+        ["sessions", "guildId"],
+        ["accessTokens", "guildId"],
+      ]) {
+        if (
+          !this.all<{ name: string }>(`PRAGMA table_info(${table})`).some(
+            (c) => c.name === column,
+          )
+        )
+          this.db.exec(
+            `ALTER TABLE ${table} ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`,
+          );
+      }
+      this.db.exec("PRAGMA user_version=3");
+    });
   }
   get<T>(sql: string, ...args: SQLInputValue[]): T | undefined {
     return this.db.prepare(sql).get(...args) as T | undefined;
@@ -126,6 +151,48 @@ export class Store {
       user.id,
       user.displayName,
     );
+  }
+  getGuildSettings(guildId: string) {
+    return this.get<GuildSettings>(
+      "SELECT * FROM guildSettings WHERE guildId=?",
+      guildId,
+    );
+  }
+  listGuildSettings() {
+    return this.all<GuildSettings>(
+      "SELECT * FROM guildSettings ORDER BY guildId",
+    );
+  }
+  saveGuildSettings(
+    guildId: string,
+    channelId: string,
+    allowedRoleId = "",
+    updatedAt = Date.now(),
+  ) {
+    this.run(
+      `INSERT INTO guildSettings(guildId,channelId,allowedRoleId,updatedAt) VALUES (?,?,?,?)
+       ON CONFLICT(guildId) DO UPDATE SET channelId=excluded.channelId,
+         allowedRoleId=excluded.allowedRoleId,updatedAt=excluded.updatedAt`,
+      guildId,
+      channelId,
+      allowedRoleId,
+      updatedAt,
+    );
+  }
+  importLegacyGuild(guildId?: string, channelId?: string, allowedRoleId = "") {
+    if (!guildId || !channelId) return;
+    this.transaction(() => {
+      if (this.getGuildSettings(guildId)) return;
+      this.saveGuildSettings(guildId, channelId, allowedRoleId);
+      this.run(
+        `INSERT INTO guildAnnouncements(guildId,roundId,channelId,status,updatedAt,messageId)
+         SELECT ?,roundId,?,status,updatedAt,messageId FROM announcements`,
+        guildId,
+        channelId,
+      );
+      this.run("UPDATE sessions SET guildId=? WHERE guildId=''", guildId);
+      this.run("UPDATE accessTokens SET guildId=? WHERE guildId=''", guildId);
+    });
   }
   close() {
     this.db.close();

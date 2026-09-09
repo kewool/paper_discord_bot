@@ -13,10 +13,12 @@ import {
   Client,
   ChatInputCommandInteraction,
   ModalSubmitInteraction,
+  PermissionFlagsBits,
+  PermissionsBitField,
   type Interaction,
   type RequestData,
 } from "discord.js";
-import { handleInteraction, makeCommands } from "../src/bot.js";
+import { announceDaily, handleInteraction, makeCommands } from "../src/bot.js";
 
 test("PDF control characters do not truncate the full grading reference", () => {
   const store = new Store(":memory:");
@@ -102,7 +104,13 @@ test("one-use invitation and expiry keep the web limited to reading", async () =
     response.headers.get("set-cookie")!.split(";")[0];
   try {
     const user = { id: "123456789012345678", displayName: "참가자 A" };
-    const access = issueAccess(f.league, user);
+    const guildA = "700000000000000001";
+    const guildB = "700000000000000002";
+    const channelA = "710000000000000001";
+    const channelB = "710000000000000002";
+    f.store.saveGuildSettings(guildA, channelA);
+    f.store.saveGuildSettings(guildB, channelB);
+    const access = issueAccess(f.league, user, guildA);
     const raw = rawToken(access.url);
     assert.equal((await request("/")).status, 200);
     assert.equal((await request("/api/attempt/page/1")).status, 401);
@@ -122,6 +130,10 @@ test("one-use invitation and expiry keep the web limited to reading", async () =
       await request("/api/state", "GET", undefined, cookie)
     ).json();
     assert.equal(privateState.user.id, user.id);
+    assert.equal(
+      privateState.discordUrl,
+      `https://discord.com/channels/${guildA}/${channelA}`,
+    );
     let csrf = privateState.csrfToken;
     assert.equal(
       (await request("/api/attempt/start", "POST", {}, cookie)).status,
@@ -142,7 +154,7 @@ test("one-use invitation and expiry keep the web limited to reading", async () =
     const userB = { id: "223456789012345678", displayName: "참가자 B" };
     const cookieB = cookieOf(
       await request("/api/access/redeem", "POST", {
-        token: rawToken(issueAccess(f.league, userB).url),
+        token: rawToken(issueAccess(f.league, userB, guildB).url),
       }),
     );
     assert.equal(
@@ -177,12 +189,17 @@ test("one-use invitation and expiry keep the web limited to reading", async () =
     f.advance(60000);
     cookie = cookieOf(
       await request("/api/access/redeem", "POST", {
-        token: rawToken(issueAccess(f.league, user).url),
+        token: rawToken(issueAccess(f.league, user, guildB).url),
       }),
     );
-    csrf = (
-      await (await request("/api/state", "GET", undefined, cookie)).json()
-    ).csrfToken;
+    const switchedServer = await (
+      await request("/api/state", "GET", undefined, cookie)
+    ).json();
+    csrf = switchedServer.csrfToken;
+    assert.equal(
+      switchedServer.discordUrl,
+      `https://discord.com/channels/${guildB}/${channelB}`,
+    );
     const reopened = await (
       await request("/api/attempt/start", "POST", {}, cookie, csrf)
     ).json();
@@ -354,6 +371,11 @@ test("Discord modal submission keeps ownership, deadlines, and feedback in Disco
   f.config.discord.guildId = "700000000000000001";
   f.config.discord.channelId = "700000000000000002";
   f.config.discord.allowedRoleId = "700000000000000003";
+  f.store.saveGuildSettings(
+    f.config.discord.guildId,
+    f.config.discord.channelId,
+    f.config.discord.allowedRoleId,
+  );
   let serial = 10n;
   const input = (
     data: object,
@@ -523,6 +545,337 @@ test("focus loss ends the reading permanently even when reported after reconnect
   }
 });
 
+test("server admins configure their own channels and role gates entirely through Discord", async () => {
+  const f = await fixture();
+  const client = new Client({ intents: [] });
+  const bot = {
+    id: "900000000000000001",
+    username: "PaperLeague",
+    discriminator: "0",
+    avatar: null,
+    bot: true,
+  };
+  Reflect.set(client, "user", bot);
+  const guildA = "700000000000000001",
+    guildB = "700000000000000002";
+  const channelA = "710000000000000001",
+    channelB = "710000000000000002";
+  const roleA = "720000000000000001",
+    roleB = "720000000000000002";
+  let botPermissions = 117760n;
+  const channels = new Map(
+    [channelA, channelB].map((id, index) => [
+      id,
+      {
+        id,
+        guildId: index ? guildB : guildA,
+        type: 0,
+        isTextBased: () => true,
+        isSendable: () => true,
+        permissionsFor: () => new PermissionsBitField(botPermissions),
+      },
+    ]),
+  );
+  const fetchChannel = mock.method(
+    client.channels,
+    "fetch",
+    async (id: any) => channels.get(id) as any,
+  );
+  const calls: any[] = [];
+  const post = mock.method(
+    client.rest,
+    "post",
+    async (_route: string, options?: RequestData) => {
+      calls.push(options?.body);
+      return {};
+    },
+  );
+  const patch = mock.method(
+    client.rest,
+    "patch",
+    async (_route: string, options?: RequestData) => {
+      calls.push(options?.body);
+      return {
+        id: "900000000000000002",
+        channel_id: channelA,
+        author: bot,
+        content: "",
+        timestamp: new Date().toISOString(),
+        edited_timestamp: null,
+        type: 0,
+        mentions: [],
+        mention_roles: [],
+        attachments: [],
+        embeds: [],
+        flags: 64,
+      };
+    },
+  );
+  const latest = () => calls.at(-1).data || calls.at(-1);
+  let serial = 20n;
+  const input = (
+    guildId: string,
+    name: string,
+    roles: string[] = [],
+    manage = false,
+    channelId = channelA,
+    roleId = "",
+  ) => {
+    const options =
+      name === "setup"
+        ? [
+            { name: "channel", type: 7, value: channelId },
+            ...(roleId ? [{ name: "role", type: 8, value: roleId }] : []),
+          ]
+        : [];
+    return Reflect.construct(ChatInputCommandInteraction, [
+      client,
+      {
+        id: String(900000000000000000n + serial++),
+        application_id: bot.id,
+        type: 2,
+        token: "local-test-only",
+        version: 1,
+        guild_id: guildId,
+        channel: { id: guildId === guildA ? channelA : channelB, type: 0 },
+        data: {
+          id: "800000000000000001",
+          name,
+          type: 1,
+          options,
+          resolved: {
+            channels: {
+              [channelId]: {
+                id: channelId,
+                name: "papers",
+                type: 0,
+                permissions: "117760",
+              },
+            },
+            roles: roleId
+              ? {
+                  [roleId]: {
+                    id: roleId,
+                    name: "readers",
+                    color: 0,
+                    hoist: false,
+                    position: 1,
+                    permissions: "0",
+                    managed: false,
+                    mentionable: false,
+                  },
+                }
+              : {},
+          },
+        },
+        member: {
+          user: {
+            id: "123456789012345678",
+            username: "reader",
+            discriminator: "0",
+            avatar: null,
+          },
+          roles,
+          permissions: manage ? String(PermissionFlagsBits.ManageGuild) : "0",
+          joined_at: new Date().toISOString(),
+          deaf: false,
+          mute: false,
+        },
+        app_permissions: "117760",
+        locale: "ko",
+        guild_locale: "ko",
+        entitlements: [],
+        authorizing_integration_owners: { "0": guildId },
+      },
+    ]) as ChatInputCommandInteraction;
+  };
+  try {
+    assert.equal(f.config.discord.guildId, undefined);
+    const definitions = makeCommands().map((command) => command.toJSON());
+    assert.equal(
+      definitions.find((c) => c.name === "setup")!.default_member_permissions,
+      String(PermissionFlagsBits.ManageGuild),
+    );
+    assert.ok(
+      definitions.every(
+        (c) =>
+          c.contexts?.join() === "0" && c.integration_types?.join() === "0",
+      ),
+    );
+    await handleInteraction(input(guildA, "paper"), f.league, f.config);
+    assert.match(latest().content, /\/setup/);
+    await handleInteraction(input(guildA, "setup"), f.league, f.config);
+    assert.match(latest().content, /서버 관리 권한/);
+    assert.equal(f.store.getGuildSettings(guildA), undefined);
+    await handleInteraction(
+      input(guildA, "setup", [], true, channelB),
+      f.league,
+      f.config,
+    );
+    assert.equal(f.store.getGuildSettings(guildA), undefined);
+    botPermissions = 0n;
+    await handleInteraction(
+      input(guildA, "setup", [], true, channelA),
+      f.league,
+      f.config,
+    );
+    assert.match(latest().content, /권한/);
+    assert.equal(f.store.getGuildSettings(guildA), undefined);
+    botPermissions = 117760n;
+    await handleInteraction(
+      input(guildA, "setup", [], true, channelA, roleA),
+      f.league,
+      f.config,
+    );
+    await handleInteraction(
+      input(guildB, "setup", [], true, channelB, roleB),
+      f.league,
+      f.config,
+    );
+    assert.equal(f.store.getGuildSettings(guildA)!.allowedRoleId, roleA);
+    assert.equal(f.store.getGuildSettings(guildB)!.allowedRoleId, roleB);
+    await handleInteraction(
+      input(guildB, "paper", [roleA]),
+      f.league,
+      f.config,
+    );
+    assert.match(latest().content, /참가 역할/);
+    await handleInteraction(
+      input(guildB, "paper", [roleB]),
+      f.league,
+      f.config,
+    );
+    assert.match(latest().components[0].components[0].url, /#access=/);
+    const storedToken = f.store.get<{ guildId: string }>(
+      "SELECT guildId FROM accessTokens",
+    )!;
+    assert.equal(storedToken.guildId, guildB);
+    await handleInteraction(
+      input(guildA, "setup", [], true, channelA, guildA),
+      f.league,
+      f.config,
+    );
+    await handleInteraction(input(guildA, "paper"), f.league, f.config);
+    assert.match(latest().components[0].components[0].url, /#access=/);
+    await handleInteraction(
+      input(guildA, "setup", [], true, channelA),
+      f.league,
+      f.config,
+    );
+    assert.equal(f.store.getGuildSettings(guildA)!.allowedRoleId, "");
+    assert.equal(f.store.getGuildSettings(guildB)!.allowedRoleId, roleB);
+    const reopened = new Store(f.config.dbPath);
+    try {
+      assert.deepEqual(
+        reopened.listGuildSettings(),
+        f.store.listGuildSettings(),
+      );
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    fetchChannel.mock.restore();
+    post.mock.restore();
+    patch.mock.restore();
+    await client.destroy();
+    await f.cleanup();
+  }
+});
+
+test("daily announcements reach every server and recover failures without duplicates", async () => {
+  const f = await fixture();
+  const guildA = "700000000000000001",
+    guildB = "700000000000000002";
+  const channelA = "710000000000000001",
+    channelB = "710000000000000002",
+    movedChannel = "710000000000000003";
+  const botId = "900000000000000001";
+  const sent: { channelId: string; nonce: string }[] = [];
+  const remote = new Map<string, any[]>();
+  let failA = true;
+  const client = {
+    user: { id: botId },
+    guilds: {
+      cache: new Map([
+        [guildA, {}],
+        [guildB, {}],
+      ]),
+    },
+    channels: {
+      fetch: async (id: string) => ({
+        id,
+        guildId: id === channelB ? guildB : guildA,
+        type: 0,
+        isTextBased: () => true,
+        isSendable: () => true,
+        permissionsFor: () => new PermissionsBitField(117760n),
+        messages: { fetch: async () => remote.get(id) || [] },
+        send: async (options: any) => {
+          if (id === channelA && failA)
+            throw new Error("simulated inaccessible channel");
+          sent.push({ channelId: id, nonce: options.nonce });
+          const message = {
+            id: String(900000000000000010n + BigInt(sent.length)),
+            author: { id: botId },
+            embeds: options.embeds.map((e: any) => e.toJSON()),
+          };
+          remote.set(id, [message]);
+          return message;
+        },
+      }),
+    },
+  } as unknown as Client;
+  const errors = mock.method(console, "error", () => {});
+  try {
+    f.store.saveGuildSettings(guildA, channelA);
+    f.store.saveGuildSettings(guildB, channelB);
+    await announceDaily(f.league, client);
+    assert.deepEqual(
+      sent.map((item) => item.channelId),
+      [channelB],
+    );
+    failA = false;
+    await announceDaily(f.league, client);
+    assert.deepEqual(
+      sent.map((item) => item.channelId),
+      [channelB, channelA],
+    );
+    const reopened = new Store(f.config.dbPath);
+    try {
+      await announceDaily(new League(reopened, f.config, f.league.now), client);
+    } finally {
+      reopened.close();
+    }
+    assert.equal(sent.length, 2);
+    f.store.run(
+      "UPDATE guildAnnouncements SET status='pending' WHERE guildId=?",
+      guildB,
+    );
+    await announceDaily(f.league, client);
+    assert.equal(sent.length, 2);
+    assert.equal(
+      f.store.get<{ status: string }>(
+        "SELECT status FROM guildAnnouncements WHERE guildId=?",
+        guildB,
+      )!.status,
+      "sent",
+    );
+    f.store.saveGuildSettings(guildA, movedChannel);
+    await announceDaily(f.league, client);
+    await announceDaily(f.league, client);
+    assert.deepEqual(
+      sent.map((item) => item.channelId),
+      [channelB, channelA, movedChannel],
+    );
+    assert.equal(new Set(sent.map((item) => item.nonce)).size, 3);
+    assert.ok(sent.every((item) => item.nonce.length <= 25));
+    assert.equal(errors.mock.callCount(), 1);
+  } finally {
+    errors.mock.restore();
+    await f.cleanup();
+  }
+});
+
 test("daily rollover uses Seoul release time and saved attempts survive a new service instance", async () => {
   const f = await fixture();
   try {
@@ -538,8 +891,64 @@ test("daily rollover uses Seoul release time and saved attempts survive a new se
       id: "persistent",
       displayName: "기록 보존",
     });
+    const round = f.league.ensureRound()!;
+    issueAccess(f.league, { id: "persistent", displayName: "기록 보존" });
+    f.store.run(
+      "INSERT INTO sessions(tokenHash,userId,csrfToken,expiresAt,roundId) VALUES (?,?,?,?,?)",
+      "legacy-session",
+      "persistent",
+      "legacy-csrf",
+      round.closesAt,
+      round.id,
+    );
+    f.store.run(
+      "INSERT INTO announcements VALUES (?,?,?,?)",
+      round.id,
+      "sent",
+      f.league.now(),
+      "legacy-message",
+    );
+    // Reopen the previous single-server schema with real saved reading/token records.
+    f.store.db.exec(
+      "DROP TABLE guildAnnouncements; DROP TABLE guildSettings; ALTER TABLE sessions DROP COLUMN guildId; ALTER TABLE accessTokens DROP COLUMN guildId; PRAGMA user_version=2;",
+    );
     const anotherStore = new Store(f.config.dbPath);
     try {
+      anotherStore.importLegacyGuild(
+        "700000000000000001",
+        "710000000000000001",
+        "720000000000000001",
+      );
+      assert.equal(
+        anotherStore.get<{ guildId: string }>("SELECT guildId FROM sessions")!
+          .guildId,
+        "700000000000000001",
+      );
+      assert.equal(
+        anotherStore.get<{ guildId: string }>(
+          "SELECT guildId FROM accessTokens",
+        )!.guildId,
+        "700000000000000001",
+      );
+      assert.equal(
+        anotherStore.get<{ status: string }>(
+          "SELECT status FROM guildAnnouncements",
+        )!.status,
+        "sent",
+      );
+      anotherStore.saveGuildSettings(
+        "700000000000000001",
+        "710000000000000002",
+      );
+      anotherStore.importLegacyGuild(
+        "700000000000000001",
+        "710000000000000001",
+        "720000000000000001",
+      );
+      assert.equal(
+        anotherStore.getGuildSettings("700000000000000001")!.channelId,
+        "710000000000000002",
+      );
       const restarted = new League(anotherStore, f.config, f.league.now);
       assert.equal(
         restarted.start({ id: "persistent", displayName: "기록 보존" })

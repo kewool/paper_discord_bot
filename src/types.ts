@@ -45,6 +45,12 @@ export interface User {
   id: string;
   displayName: string;
 }
+export interface GuildSettings {
+  guildId: string;
+  channelId: string;
+  allowedRoleId: string;
+  updatedAt: number;
+}
 export interface Attempt {
   id: string;
   userId: string;

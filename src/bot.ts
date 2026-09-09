@@ -1,4 +1,5 @@
 import {
+  ApplicationIntegrationType,
   ActionRowBuilder,
   AttachmentBuilder,
   ButtonBuilder,
@@ -7,10 +8,12 @@ import {
   Client,
   EmbedBuilder,
   GatewayIntentBits,
+  InteractionContextType,
   LabelBuilder,
   MessageFlags,
   ModalBuilder,
   SlashCommandBuilder,
+  PermissionFlagsBits,
   TextInputBuilder,
   TextInputStyle,
   escapeMarkdown,
@@ -20,39 +23,85 @@ import {
   type SlashCommandOptionsOnlyBuilder,
   type TextChannel,
 } from "discord.js";
+import { createHash } from "node:crypto";
 import type { Config } from "./config.js";
 import { issueAccess } from "./auth.js";
 import { AppError, League } from "./league.js";
-import { RUBRIC, type Grade, type Round, type User } from "./types.js";
+import {
+  RUBRIC,
+  type Grade,
+  type GuildSettings,
+  type Round,
+  type User,
+} from "./types.js";
+
+const guildCommand = <
+  T extends SlashCommandBuilder | SlashCommandOptionsOnlyBuilder,
+>(
+  command: T,
+) =>
+  command
+    .setContexts(InteractionContextType.Guild)
+    .setIntegrationTypes(ApplicationIntegrationType.GuildInstall);
 
 export function makeCommands(): Array<
   SlashCommandBuilder | SlashCommandOptionsOnlyBuilder
 > {
   return [
-    new SlashCommandBuilder()
-      .setName("paper")
-      .setDescription("오늘의 논문 읽기를 시작할 웹 페이지를 엽니다."),
-    new SlashCommandBuilder()
-      .setName("submit")
-      .setDescription(
-        "열람이 끝난 논문의 정리를 디스코드 작성 창에서 제출합니다.",
-      ),
-    new SlashCommandBuilder()
-      .setName("ranking")
-      .setDescription("오늘 또는 최근 7일 순위를 봅니다.")
-      .addStringOption((option) =>
-        option
-          .setName("period")
-          .setDescription("순위 기간")
-          .setRequired(false)
-          .addChoices(
-            { name: "오늘", value: "today" },
-            { name: "최근 7일", value: "week" },
-          ),
-      ),
-    new SlashCommandBuilder()
-      .setName("my-score")
-      .setDescription("오늘 나의 읽기·제출 상태와 점수를 봅니다."),
+    guildCommand(
+      new SlashCommandBuilder()
+        .setName("paper")
+        .setDescription("오늘의 논문 읽기를 시작할 웹 페이지를 엽니다."),
+    ),
+    guildCommand(
+      new SlashCommandBuilder()
+        .setName("submit")
+        .setDescription(
+          "열람이 끝난 논문의 정리를 디스코드 작성 창에서 제출합니다.",
+        ),
+    ),
+    guildCommand(
+      new SlashCommandBuilder()
+        .setName("ranking")
+        .setDescription("전체 서버의 오늘 또는 최근 7일 순위를 봅니다.")
+        .addStringOption((option) =>
+          option
+            .setName("period")
+            .setDescription("순위 기간")
+            .setRequired(false)
+            .addChoices(
+              { name: "오늘", value: "today" },
+              { name: "최근 7일", value: "week" },
+            ),
+        ),
+    ),
+    guildCommand(
+      new SlashCommandBuilder()
+        .setName("my-score")
+        .setDescription("오늘 나의 읽기·제출 상태와 점수를 봅니다."),
+    ),
+    guildCommand(
+      new SlashCommandBuilder()
+        .setName("setup")
+        .setDescription("이 서버의 Paper League 공지와 참가 역할을 설정합니다.")
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+        .addChannelOption((option) =>
+          option
+            .setName("channel")
+            .setDescription("매일 논문 공지를 보낼 텍스트 또는 공지 채널")
+            .setRequired(true)
+            .addChannelTypes(
+              ChannelType.GuildText,
+              ChannelType.GuildAnnouncement,
+            ),
+        )
+        .addRoleOption((option) =>
+          option
+            .setName("role")
+            .setDescription("참가 역할입니다. 생략하면 역할 제한을 해제합니다.")
+            .setRequired(false),
+        ),
+    ),
   ];
 }
 
@@ -71,16 +120,15 @@ function replyOptions(content: string) {
   return { content, allowedMentions: noMentions };
 }
 
-function isAllowed(interaction: Interaction, config: Config): boolean {
-  if (!interaction.inGuild() || interaction.guildId !== config.discord.guildId)
-    return false;
-  if (!config.discord.allowedRoleId) return true;
+function isAllowed(interaction: Interaction, settings: GuildSettings): boolean {
+  if (!settings.allowedRoleId || settings.allowedRoleId === settings.guildId)
+    return true;
   const roles = interaction.member?.roles;
   return Boolean(
     roles &&
     (Array.isArray(roles)
-      ? roles.includes(config.discord.allowedRoleId)
-      : roles.cache.has(config.discord.allowedRoleId)),
+      ? roles.includes(settings.allowedRoleId)
+      : roles.cache.has(settings.allowedRoleId)),
   );
 }
 
@@ -98,7 +146,10 @@ async function handleCommand(
     const entries = league
       .leaderboard(period, interaction.user.id)
       .slice(0, 10);
-    const title = period === "week" ? "최근 7일 순위" : "오늘의 순위";
+    const title =
+      period === "week"
+        ? "전체 서버 · 최근 7일 순위"
+        : "전체 서버 · 오늘의 순위";
     const description = entries.length
       ? entries
           .map(
@@ -159,7 +210,7 @@ async function handleCommand(
           },
         )
         .setFooter({
-          text: "전체 피드백은 첨부 파일에서 확인하실 수 있습니다. 순위: /ranking",
+          text: "전체 피드백은 첨부 파일, 전체 서버 순위는 /ranking에서 확인하실 수 있습니다.",
         });
       await interaction.editReply({
         embeds: [embed],
@@ -211,7 +262,7 @@ async function sendPaperLink(
     id: interaction.user.id,
     displayName: interaction.user.globalName || interaction.user.username,
   };
-  const access = issueAccess(league, user);
+  const access = issueAccess(league, user, interaction.guildId || "");
   const expiresAt = Math.floor(access.expiresAt / 1000);
   const embed = new EmbedBuilder()
     .setColor(0x315c8c)
@@ -279,13 +330,75 @@ function gradeReport(grade: Grade): string {
   ].join("\n\n");
 }
 
+function canManageGuild(interaction: ChatInputCommandInteraction): boolean {
+  return Boolean(
+    interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild),
+  );
+}
+
+function canUseAnnouncementChannel(
+  channel: TextChannel,
+  client: Client,
+): boolean {
+  const user = client.user;
+  if (!user) return false;
+  const permissions = channel.permissionsFor(user);
+  return Boolean(
+    permissions?.has([
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.EmbedLinks,
+      PermissionFlagsBits.AttachFiles,
+      PermissionFlagsBits.ReadMessageHistory,
+    ]),
+  );
+}
+
+async function setupGuild(
+  interaction: ChatInputCommandInteraction,
+  league: League,
+): Promise<void> {
+  if (!canManageGuild(interaction))
+    throw new AppError(
+      403,
+      "이 명령은 서버 관리 권한이 있는 분만 사용할 수 있습니다.",
+    );
+  const selected = interaction.options.getChannel("channel", true);
+  const channel = await interaction.client.channels.fetch(selected.id);
+  if (
+    !channel ||
+    !("guildId" in channel) ||
+    channel.guildId !== interaction.guildId ||
+    !isSendableTextChannel(channel) ||
+    !canUseAnnouncementChannel(channel, interaction.client)
+  ) {
+    throw new AppError(
+      422,
+      "선택한 채널에서 봇의 채널 보기, 메시지 보내기, 임베드 링크, 파일 첨부, 메시지 기록 보기 권한을 확인해 주세요.",
+    );
+  }
+  const role = interaction.options.getRole("role");
+  league.store.saveGuildSettings(
+    interaction.guildId!,
+    channel.id,
+    role?.id || "",
+    league.now(),
+  );
+  await interaction.editReply(
+    replyOptions(
+      role
+        ? `이 서버의 공지 채널을 <#${channel.id}>로 설정했고, <@&${role.id}> 역할에만 참가를 허용했습니다.`
+        : `이 서버의 공지 채널을 <#${channel.id}>로 설정했고, 참가 역할 제한을 해제했습니다. /setup에서 역할을 생략하면 언제든 제한을 해제할 수 있습니다.`,
+    ),
+  );
+}
+
 export async function handleInteraction(
   interaction: Interaction,
   league: League,
   config: Config,
 ): Promise<void> {
-  if (!interaction.inGuild() || interaction.guildId !== config.discord.guildId)
-    return;
+  if (!interaction.inGuild()) return;
   if (
     !interaction.isChatInputCommand() &&
     !interaction.isButton() &&
@@ -293,7 +406,7 @@ export async function handleInteraction(
   )
     return;
   const recognized = interaction.isChatInputCommand()
-    ? ["paper", "submit", "ranking", "my-score"].includes(
+    ? ["paper", "submit", "ranking", "my-score", "setup"].includes(
         interaction.commandName,
       )
     : interaction.isButton()
@@ -301,7 +414,21 @@ export async function handleInteraction(
       : interaction.customId.startsWith(submitPrefix);
   if (!recognized) return;
   try {
-    if (!isAllowed(interaction, config))
+    if (
+      interaction.isChatInputCommand() &&
+      interaction.commandName === "setup"
+    ) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await setupGuild(interaction, league);
+      return;
+    }
+    const settings = league.store.getGuildSettings(interaction.guildId!);
+    if (!settings)
+      throw new AppError(
+        403,
+        "이 서버는 아직 설정되지 않았습니다. 서버 관리자가 /setup을 실행해 주세요.",
+      );
+    if (!isAllowed(interaction, settings))
       throw new AppError(
         403,
         "이 서버의 참가 역할이 있어야 사용할 수 있습니다.",
@@ -362,7 +489,7 @@ export async function handleInteraction(
       );
       await interaction.editReply(
         replyOptions(
-          "정리를 접수했습니다. 한 번 제출한 내용은 수정할 수 없습니다.\n채점 결과와 항목별 피드백은 /my-score, 순위는 /ranking에서 확인해 주세요.",
+          "정리를 접수했습니다. 한 번 제출한 내용은 수정할 수 없습니다.\n채점 결과와 항목별 피드백은 /my-score, 전체 서버 순위는 /ranking에서 확인해 주세요.",
         ),
       );
     } else if (interaction.isChatInputCommand()) {
@@ -408,11 +535,18 @@ function isSendableTextChannel(channel: unknown): channel is TextChannel {
   );
 }
 
-function claimAnnouncement(league: League, round: Round, now: number): boolean {
+function claimAnnouncement(
+  league: League,
+  settings: GuildSettings,
+  round: Round,
+  now: number,
+): boolean {
   return league.store.transaction(() => {
     const existing = league.store.get<{ status: string; updatedAt: number }>(
-      "SELECT status,updatedAt FROM announcements WHERE roundId=?",
+      "SELECT status,updatedAt FROM guildAnnouncements WHERE guildId=? AND roundId=? AND channelId=?",
+      settings.guildId,
       round.id,
+      settings.channelId,
     );
     if (existing?.status === "sent") return false;
     if (
@@ -421,15 +555,129 @@ function claimAnnouncement(league: League, round: Round, now: number): boolean {
     )
       return false;
     league.store.run(
-      `INSERT INTO announcements(roundId,status,updatedAt,messageId) VALUES (?,?,?,NULL)
-      ON CONFLICT(roundId) DO UPDATE SET status='sending',updatedAt=?,messageId=NULL`,
+      `INSERT INTO guildAnnouncements(guildId,roundId,channelId,status,updatedAt,messageId) VALUES (?,?,?,?,?,NULL)
+      ON CONFLICT(guildId,roundId,channelId) DO UPDATE SET status='sending',updatedAt=excluded.updatedAt,messageId=NULL`,
+      settings.guildId,
       round.id,
+      settings.channelId,
       "sending",
-      now,
       now,
     );
     return true;
   });
+}
+
+const announcementNonce = (settings: GuildSettings, round: Round) =>
+  createHash("sha256")
+    .update(`${round.id}:${settings.guildId}:${settings.channelId}`)
+    .digest("base64url")
+    .slice(0, 24);
+
+async function announceToGuild(
+  league: League,
+  client: Client,
+  settings: GuildSettings,
+  round: Round,
+  shouldStop: () => boolean,
+): Promise<void> {
+  if (shouldStop() || !client.guilds.cache.has(settings.guildId)) return;
+  const channel = await client.channels.fetch(settings.channelId);
+  if (
+    !channel ||
+    !("guildId" in channel) ||
+    channel.guildId !== settings.guildId ||
+    !isSendableTextChannel(channel) ||
+    !canUseAnnouncementChannel(channel, client)
+  )
+    return;
+  const now = league.now();
+  if (!claimAnnouncement(league, settings, round, now)) return;
+  try {
+    if (shouldStop() || league.now() >= round.closesAt)
+      throw new Error("stopped");
+    const marker = markerFor(round);
+    const messages = await channel.messages.fetch({ limit: 100 });
+    const prior = messages.find(
+      (message) =>
+        message.author.id === client.user?.id &&
+        message.embeds.some((embed) => embed.footer?.text === marker),
+    );
+    if (prior) {
+      league.store.run(
+        "UPDATE guildAnnouncements SET status='sent',updatedAt=?,messageId=? WHERE guildId=? AND roundId=? AND channelId=?",
+        league.now(),
+        prior.id,
+        settings.guildId,
+        round.id,
+        settings.channelId,
+      );
+      return;
+    }
+    if (shouldStop() || league.now() >= round.closesAt)
+      throw new Error("stopped");
+    const embed = new EmbedBuilder()
+      .setColor(0x315c8c)
+      .setTitle("오늘의 논문 읽기")
+      .setDescription(
+        `오늘의 논문이 열렸습니다. 웹에서 읽고 디스코드 /submit으로 정리를 제출해 주세요.\n읽기 ${round.readingMinutes}분 · 작성 ${round.writingMinutes}분 · <t:${unix(round.closesAt)}:R> 마감`,
+      )
+      .setFooter({ text: marker });
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId("paper:link")
+        .setLabel("내 전용 링크 받기")
+        .setStyle(ButtonStyle.Primary),
+    );
+    const message = await channel.send({
+      embeds: [embed],
+      components: [row],
+      allowedMentions: noMentions,
+      nonce: announcementNonce(settings, round),
+      enforceNonce: true,
+    });
+    league.store.run(
+      "UPDATE guildAnnouncements SET status='sent',updatedAt=?,messageId=? WHERE guildId=? AND roundId=? AND channelId=?",
+      league.now(),
+      message.id,
+      settings.guildId,
+      round.id,
+      settings.channelId,
+    );
+  } catch (error) {
+    league.store.run(
+      "UPDATE guildAnnouncements SET status='pending',updatedAt=?,messageId=NULL WHERE guildId=? AND roundId=? AND channelId=?",
+      league.now(),
+      settings.guildId,
+      round.id,
+      settings.channelId,
+    );
+    if (!shouldStop())
+      console.error(
+        "[discord announcement failed]",
+        error instanceof Error ? error.name : "unknown",
+      );
+  }
+}
+
+/** Announces the shared daily round once to every configured server. */
+export async function announceDaily(
+  league: League,
+  client: Client,
+  shouldStop: () => boolean = () => false,
+): Promise<void> {
+  const round = league.ensureRound();
+  if (!round || league.now() < round.opensAt || shouldStop()) return;
+  for (const settings of league.store.listGuildSettings()) {
+    if (shouldStop()) return;
+    try {
+      await announceToGuild(league, client, settings, round, shouldStop);
+    } catch (error) {
+      console.error(
+        "[discord announcement failed]",
+        error instanceof Error ? error.name : "unknown",
+      );
+    }
+  }
 }
 
 export async function startBot(
@@ -441,84 +689,14 @@ export async function startBot(
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   let timer: ReturnType<typeof setInterval> | undefined;
   let ticking = false;
-  let claimedRoundId: string | undefined;
   let stopped = false;
   let inFlightTick: Promise<void> | undefined;
   const tick = async (): Promise<void> => {
     if (ticking) return;
     ticking = true;
     try {
-      const round = league.ensureRound();
-      if (!round) return;
-      if (Date.now() < round.opensAt) return;
-      const announcement = league.store.get<{ status: string }>(
-        "SELECT status FROM announcements WHERE roundId=?",
-        round.id,
-      );
-      if (announcement?.status === "sent") return;
-      const channel = await client.channels.fetch(config.discord.channelId);
-      if (
-        !channel ||
-        !("guildId" in channel) ||
-        channel.guildId !== config.discord.guildId ||
-        !isSendableTextChannel(channel)
-      )
-        return;
-      if (!claimAnnouncement(league, round, Date.now())) return;
-      claimedRoundId = round.id;
-      const marker = markerFor(round);
-      const messages = await channel.messages.fetch({ limit: 100 });
-      const prior = messages.find(
-        (message) =>
-          message.author.id === client.user?.id &&
-          message.embeds.some((embed) => embed.footer?.text === marker),
-      );
-      if (prior) {
-        league.store.run(
-          "UPDATE announcements SET status='sent',updatedAt=?,messageId=? WHERE roundId=?",
-          Date.now(),
-          prior.id,
-          round.id,
-        );
-        claimedRoundId = undefined;
-        return;
-      }
-      const embed = new EmbedBuilder()
-        .setColor(0x315c8c)
-        .setTitle("오늘의 논문 읽기")
-        .setDescription(
-          `오늘의 논문이 열렸습니다. 웹에서 읽고 디스코드 /submit으로 정리를 제출해 주세요.\n읽기 ${round.readingMinutes}분 · 작성 ${round.writingMinutes}분 · <t:${unix(round.closesAt)}:R> 마감`,
-        )
-        .setFooter({ text: marker });
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId("paper:link")
-          .setLabel("내 전용 링크 받기")
-          .setStyle(ButtonStyle.Primary),
-      );
-      const message = await channel.send({
-        embeds: [embed],
-        components: [row],
-        allowedMentions: noMentions,
-        nonce: round.id.replace(/\D/g, ""),
-        enforceNonce: true,
-      });
-      league.store.run(
-        "UPDATE announcements SET status='sent',updatedAt=?,messageId=? WHERE roundId=?",
-        Date.now(),
-        message.id,
-        round.id,
-      );
-      claimedRoundId = undefined;
+      await announceDaily(league, client, () => stopped);
     } catch (error) {
-      if (claimedRoundId) {
-        league.store.run(
-          "UPDATE announcements SET status='pending',updatedAt=?,messageId=NULL WHERE roundId=?",
-          Date.now(),
-          claimedRoundId,
-        );
-        claimedRoundId = undefined;
-      }
       console.error(
         "[discord announcement failed]",
         error instanceof Error ? error.name : "unknown",

@@ -8,20 +8,18 @@ import { startArxivWorker } from "./arxiv.js";
 import { pathToFileURL } from "node:url";
 
 export async function startApplication(config: Config) {
-  if (
-    !config.demo &&
-    !(
-      config.discord.botToken &&
-      config.discord.clientId &&
-      config.discord.guildId &&
-      config.discord.channelId
-    )
-  ) {
+  if (!config.demo && !(config.discord.botToken && config.discord.clientId)) {
     throw new Error(
-      ".env에 DISCORD_BOT_TOKEN, DISCORD_CLIENT_ID, DISCORD_GUILD_ID, DISCORD_CHANNEL_ID를 설정해 주세요. 로컬 체험은 npm run demo로 실행할 수 있습니다.",
+      ".env에 DISCORD_BOT_TOKEN과 DISCORD_CLIENT_ID를 설정해 주세요. 각 서버 관리자는 Discord에서 /setup을 실행합니다. 로컬 체험은 npm run demo로 실행할 수 있습니다.",
     );
   }
   const store = new Store(config.dbPath);
+  if (!config.demo)
+    store.importLegacyGuild(
+      config.discord.guildId,
+      config.discord.channelId,
+      config.discord.allowedRoleId,
+    );
   const league = new League(store, config);
   const app = createApp(league, config);
   const server = await new Promise<ReturnType<typeof app.listen>>(

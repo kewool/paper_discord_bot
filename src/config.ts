@@ -25,9 +25,10 @@ export interface Config {
   discord: {
     botToken: string;
     clientId: string;
-    guildId: string;
-    channelId: string;
-    allowedRoleId: string;
+    /** Legacy single-guild settings retained for migration compatibility. */
+    guildId?: string;
+    channelId?: string;
+    allowedRoleId?: string;
   };
 }
 export function loadConfig(env = process.env): Config {
@@ -92,9 +93,9 @@ export function loadConfig(env = process.env): Config {
     discord: {
       botToken: env.DISCORD_BOT_TOKEN || "",
       clientId: env.DISCORD_CLIENT_ID || "",
-      guildId: env.DISCORD_GUILD_ID || "",
-      channelId: env.DISCORD_CHANNEL_ID || "",
-      allowedRoleId: env.DISCORD_ALLOWED_ROLE_ID || "",
+      guildId: env.DISCORD_GUILD_ID || undefined,
+      channelId: env.DISCORD_CHANNEL_ID || undefined,
+      allowedRoleId: env.DISCORD_ALLOWED_ROLE_ID || undefined,
     },
   };
 }

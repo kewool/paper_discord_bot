@@ -98,6 +98,7 @@ export function createApp(league: League, config: Config) {
       league.state(
         res.locals.session?.user || null,
         res.locals.session?.csrfToken || null,
+        res.locals.session?.guildId || "",
       ),
     ),
   );

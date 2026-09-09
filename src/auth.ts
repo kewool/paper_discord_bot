@@ -19,6 +19,7 @@ interface Session {
   csrfToken: string;
   expiresAt: number;
   roundId: string;
+  guildId: string;
 }
 interface AccessToken {
   tokenHash: string;
@@ -26,13 +27,20 @@ interface AccessToken {
   roundId: string;
   expiresAt: number;
   usedAt: number | null;
+  guildId: string;
 }
 
 // Called only after Discord has authenticated the interaction and checked membership.
 export function issueAccess(
   league: League,
   user: User,
+  guildId = "",
 ): { url: string; expiresAt: number } {
+  if (guildId && !league.store.getGuildSettings(guildId))
+    throw new AppError(
+      403,
+      "서버 관리자가 /setup으로 공지 채널을 먼저 설정해 주세요.",
+    );
   const round = league.ensureRound();
   if (!round)
     throw new AppError(
@@ -51,11 +59,12 @@ export function issueAccess(
       round.id,
     );
     league.store.run(
-      "INSERT INTO accessTokens VALUES (?,?,?,?,NULL)",
+      "INSERT INTO accessTokens(tokenHash,userId,roundId,expiresAt,usedAt,guildId) VALUES (?,?,?,?,NULL,?)",
       digest(raw),
       user.id,
       round.id,
       expiresAt,
+      guildId,
     );
   });
   return { url: `${league.config.publicUrl}/#access=${raw}`, expiresAt };
@@ -88,7 +97,9 @@ export class Auth {
       "SELECT * FROM users WHERE id=?",
       session.userId,
     );
-    return user ? { user, csrfToken: session.csrfToken } : null;
+    return user
+      ? { user, csrfToken: session.csrfToken, guildId: session.guildId }
+      : null;
   }
   sameOrigin(req: Request) {
     if (req.get("Origin") !== this.config.publicUrl)
@@ -111,6 +122,7 @@ export class Auth {
     user: User,
     roundId: string,
     expiresAt: number,
+    guildId = "",
   ) {
     const old: unknown = req.cookies?.[SESSION_COOKIE];
     if (typeof old === "string")
@@ -121,12 +133,13 @@ export class Auth {
     const raw = token();
     this.league.store.upsertUser(user);
     this.league.store.run(
-      "INSERT INTO sessions(tokenHash,userId,csrfToken,expiresAt,roundId) VALUES (?,?,?,?,?)",
+      "INSERT INTO sessions(tokenHash,userId,csrfToken,expiresAt,roundId,guildId) VALUES (?,?,?,?,?,?)",
       digest(raw),
       user.id,
       token(),
       expiresAt,
       roundId,
+      guildId,
     );
     this.league.store.run(
       "DELETE FROM sessions WHERE expiresAt<=?",
@@ -170,7 +183,14 @@ export class Auth {
         "SELECT * FROM users WHERE id=?",
         record.userId,
       )!;
-      this.setSession(req, res, user, record.roundId, round!.closesAt);
+      this.setSession(
+        req,
+        res,
+        user,
+        record.roundId,
+        round!.closesAt,
+        record.guildId,
+      );
     });
   }
   demo(req: Request, res: Response) {
