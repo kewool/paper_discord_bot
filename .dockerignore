@@ -1,0 +1,16 @@
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+!scripts/
+!scripts/**
+!tests/
+!tests/**
+!public/
+!public/**
+!deploy/
+!deploy/codex/
+!deploy/codex/config.toml
+!Dockerfile

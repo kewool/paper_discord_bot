@@ -1,0 +1,24 @@
+# 기존 HTTPS server { ... } 블록 안에 넣으세요.
+# TLS 인증서, server_name, HTTP->HTTPS 리다이렉트 설정은 기존 Nginx 설정을 그대로 사용합니다.
+# Nginx 컨테이너가 Docker 네트워크에 연결되어 있어야 paper-league를 조회할 수 있습니다.
+
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+location / {
+    # 변수 proxy_pass를 사용하면 컨테이너 재생성으로 IP가 바뀌어도
+    # Docker embedded DNS를 통해 다시 조회합니다.
+    set $paper_league_upstream http://paper-league:3000;
+    proxy_pass $paper_league_upstream$request_uri;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    # TLS를 종료하는 Nginx 한 단계만 있으므로 외부에서 보낸 값을 덮어씁니다.
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+
+    proxy_cache off;
+    proxy_buffering off;
+    # 백엔드의 Cache-Control: private, no-store 응답을 그대로 전달합니다.
+    proxy_pass_header Cache-Control;
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#16263d" />
+    <title>Paper League · 오늘의 논문 읽기</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#reader" aria-label="Paper League 홈"
+        ><span class="brand-mark">P</span><span>Paper <em>League</em></span></a
+      >
+      <nav aria-label="주요 메뉴">
+        <a href="#reader">오늘의 리딩</a>
+      </nav>
+      <div class="account" id="account"></div>
+    </header>
+    <main>
+      <div id="demo-banner" class="demo-banner hidden" role="note">
+        데모 모드 · 직접 만든 연습용 글을 읽습니다. 제출은 운영 Discord에서
+        진행합니다.
+      </div>
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+      <section id="reader" class="page-section">
+        <div class="eyebrow">DAILY RESEARCH READING LEAGUE</div>
+        <div id="reader-content"></div>
+        <noscript
+          >제한 시간 열람을 위해 JavaScript가 필요합니다. 브라우저 설정에서
+          활성화해 주세요.</noscript
+        >
+      </section>
+    </main>
+    <footer>
+      <span>Paper League</span><span>읽고, 생각하고, 나누는 연구 습관</span>
+    </footer>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

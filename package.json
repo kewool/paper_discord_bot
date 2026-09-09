@@ -1,0 +1,49 @@
+{
+  "name": "paper_discord_bot",
+  "version": "1.0.0",
+  "description": "Discord daily paper reading and summary league",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/src/main.js",
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "demo": "tsx scripts/demo.ts",
+    "paper:import": "tsx scripts/import-paper.ts",
+    "bot:register": "tsx scripts/register-commands.ts",
+    "test": "tsx --test tests/core.test.ts",
+    "test:browser": "playwright test",
+    "grade:smoke": "tsx scripts/grade-smoke.ts",
+    "admin": "tsx scripts/admin.ts",
+    "paper:sync": "tsx scripts/sync-arxiv.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.8",
+    "@openai/codex-sdk": "^0.153.4",
+    "cookie-parser": "^1.4.7",
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "fast-xml-parser": "^5.11.1",
+    "helmet": "^8.3.0",
+    "luxon": "^3.7.2",
+    "pdfjs-dist": "^6.3.289",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.6",
+    "@types/luxon": "^3.7.5",
+    "@types/node": "^22.20.1",
+    "pdf-lib": "^1.17.1",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}
