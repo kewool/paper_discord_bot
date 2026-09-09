@@ -1,6 +1,14 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { resolve, sep } from "node:path";
 import { Store } from "../src/store.js";
 import { loadConfig } from "../src/config.js";
@@ -19,6 +27,7 @@ import {
   type RequestData,
 } from "discord.js";
 import { announceDaily, handleInteraction, makeCommands } from "../src/bot.js";
+import { resetPapers, resetUser } from "../src/maintenance.js";
 
 test("PDF control characters do not truncate the full grading reference", () => {
   const store = new Store(":memory:");
@@ -74,6 +83,135 @@ async function fixture() {
     },
   };
 }
+
+test("maintenance resets only the selected user, then clears papers without deleting server settings", async () => {
+  const f = await fixture();
+  try {
+    const userA = { id: "123456789012345678", displayName: "Reset user" };
+    const userB = { id: "223456789012345678", displayName: "Keep user" };
+    const guildId = "700000000000000001";
+    const channelId = "710000000000000001";
+    f.store.saveGuildSettings(guildId, channelId, "720000000000000001");
+    const settings = f.store.getGuildSettings(guildId);
+    const firstAttempt = f.league.start(userA);
+    const otherAttempt = f.league.start(userB);
+    const round = f.league.ensureRound()!;
+    const paperDirectory = f.store.getPaper(round.paperId)!.directory;
+    for (const user of [userA, userB]) {
+      issueAccess(f.league, user, guildId, channelId);
+      f.store.run(
+        `INSERT INTO sessions(tokenHash,userId,csrfToken,expiresAt,roundId)
+        VALUES (?,?,?,?,?)`,
+        user.id,
+        user.id,
+        "csrf",
+        f.league.now() + 60000,
+        round.id,
+      );
+      f.store.run(
+        "UPDATE attempts SET score=80,gradingStatus='graded' WHERE userId=?",
+        user.id,
+      );
+    }
+    const preview = execFileSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/admin.ts", "reset-user", userA.id],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_ENV: "test",
+          DEMO_MODE: "true",
+          DATA_DIR: f.config.dataDir,
+          PUBLIC_URL: "http://127.0.0.1:3000",
+        },
+      },
+    );
+    assert.match(preview, /미리보기/);
+    assert.ok(f.store.get("SELECT * FROM users WHERE id=?", userA.id));
+    assert.equal(f.league.currentAttempt(userA.id)!.id, firstAttempt.id);
+    resetUser(f.store, userA.id, true);
+    assert.equal(f.store.get("SELECT * FROM users WHERE id=?", userA.id), undefined);
+    assert.equal(f.league.currentAttempt(userA.id), undefined);
+    for (const table of ["sessions", "accessTokens"])
+      assert.equal(
+        f.store.get(`SELECT * FROM ${table} WHERE userId=?`, userA.id),
+        undefined,
+      );
+    assert.equal(f.league.currentAttempt(userB.id)!.id, otherAttempt.id);
+    assert.equal(f.league.currentAttempt(userB.id)!.score, 80);
+    assert.ok(f.store.get("SELECT * FROM sessions WHERE userId=?", userB.id));
+    f.advance(60000);
+    const fresh = f.league.start(userA);
+    assert.notEqual(fresh.id, firstAttempt.id);
+    assert.equal(fresh.phase, "reading");
+    assert.equal(fresh.startedAt, f.league.now());
+
+    f.store.run(
+      "INSERT INTO announcements VALUES (?,?,?,?)",
+      round.id,
+      "sent",
+      1,
+      "message",
+    );
+    f.store.run(
+      "INSERT INTO guildAnnouncements VALUES (?,?,?,?,?,?)",
+      guildId,
+      round.id,
+      channelId,
+      "sent",
+      1,
+      "guild-message",
+    );
+    f.store.run(
+      "INSERT INTO arxivImports VALUES (?,?,?,?,?,?,?,?)",
+      "test-arxiv",
+      round.paperId,
+      "cs.AI",
+      "",
+      "",
+      "imported",
+      null,
+      1,
+    );
+    f.store.run("INSERT INTO syncState VALUES (?,?,?,?)", "arxiv", 1, 1, null);
+    f.store.run("INSERT INTO sourceLocks VALUES (?,?,?)", "arxiv", "test", 1);
+    const importDirectory = resolve(f.config.dataDir, "import-work");
+    await mkdir(importDirectory);
+    await writeFile(resolve(importDirectory, "incomplete.pdf"), "test import");
+    const retainedFile = resolve(f.config.dataDir, "operator-settings.txt");
+    await writeFile(retainedFile, "keep this file");
+    resetPapers(f.store, f.config.dataDir);
+    assert.ok(f.store.getPaper(round.paperId));
+    assert.ok((await stat(paperDirectory)).isDirectory());
+    assert.throws(
+      () => resetPapers(f.store, resolve(f.config.dataDir, "wrong"), true),
+      /경로/,
+    );
+    resetPapers(f.store, f.config.dataDir, true);
+    assert.equal(f.league.ensureRound(), null);
+    assert.equal(f.store.get("SELECT * FROM attempts"), undefined);
+    assert.equal(f.store.get("SELECT * FROM sessions"), undefined);
+    assert.equal(f.store.get("SELECT * FROM accessTokens"), undefined);
+    assert.equal(f.store.get("SELECT * FROM arxivImports"), undefined);
+    assert.equal(
+      f.store.get("SELECT * FROM syncState WHERE name='arxiv'"),
+      undefined,
+    );
+    assert.equal(
+      f.store.get("SELECT * FROM sourceLocks WHERE name='arxiv'"),
+      undefined,
+    );
+    assert.deepEqual(f.store.all("PRAGMA foreign_key_check"), []);
+    assert.deepEqual(f.store.getGuildSettings(guildId), settings);
+    assert.ok(f.store.get("SELECT * FROM users WHERE id=?", userB.id));
+    assert.equal(await readFile(retainedFile, "utf8"), "keep this file");
+    await assert.rejects(stat(paperDirectory), { code: "ENOENT" });
+    await assert.rejects(stat(importDirectory), { code: "ENOENT" });
+  } finally {
+    await f.cleanup();
+  }
+});
 
 test("one-use invitation and expiry keep the web limited to reading", async () => {
   const f = await fixture();
