@@ -118,7 +118,7 @@ export function loadConfig(env = process.env): Config {
         env.TRANSLATION_ENABLED !== "false" &&
         (!demo || env.TRANSLATION_ENABLED === "true"),
       model: env.TRANSLATION_MODEL || env.CODEX_MODEL || "gpt-6-astra",
-      timeoutMs: integer("TRANSLATION_TIMEOUT_SECONDS", 900, 30, 1800) * 1000,
+      timeoutMs: integer("TRANSLATION_TIMEOUT_SECONDS", 1800, 30, 1800) * 1000,
     },
     trustProxy: integer("TRUST_PROXY_HOPS", 0, 0, 5),
     paperSelection: {

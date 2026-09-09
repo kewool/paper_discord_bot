@@ -28,6 +28,53 @@ import {
 } from "discord.js";
 import { announceDaily, handleInteraction, makeCommands } from "../src/bot.js";
 import { resetPapers, resetUser } from "../src/maintenance.js";
+import { PDFDocument } from "pdf-lib";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { importPaper } from "../src/papers.js";
+
+test("PDF import preserves source figures larger than the output page pixel limit", async () => {
+  const root = resolve("work");
+  await mkdir(root, { recursive: true });
+  const dir = await mkdtemp(resolve(root, "pdf-figures-"));
+  try {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([600, 800]);
+    page.drawText(
+      "This synthetic paper checks whether large source figures remain visible. ".repeat(
+        8,
+      ),
+      { x: 20, y: 760, size: 8, maxWidth: 560, lineHeight: 12 },
+    );
+    const figure = createCanvas(2000, 1600);
+    figure.getContext("2d").fillStyle = "#00cc55";
+    figure.getContext("2d").fillRect(0, 0, 2000, 1600);
+    const embedded = await pdf.embedPng(figure.toBuffer("image/png"));
+    page.drawImage(embedded, { x: 100, y: 300, width: 200, height: 200 });
+    const source = resolve(dir, "source.pdf");
+    await writeFile(source, await pdf.save());
+    const meta = {
+      title: "Figure fixture",
+      authors: "Test",
+      sourceUrl: "https://example.com",
+      license: "CC0",
+    };
+    const imported = await importPaper(source, meta, dir);
+    const output = await loadImage(
+      await readFile(resolve(imported.directory, "page-1.png")),
+    );
+    const canvas = createCanvas(output.width, output.height);
+    canvas.getContext("2d").drawImage(output, 0, 0);
+    const pixel = canvas.getContext("2d").getImageData(400, 800, 1, 1).data;
+    assert.ok(
+      pixel[0] < 30 && pixel[1] > 150 && pixel[2] < 120,
+      "source figure must remain in the rendered page",
+    );
+  } finally {
+    if (!resolve(dir).startsWith(root + sep))
+      throw new Error("Unexpected test path");
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("PDF control characters do not truncate the full grading reference", () => {
   const store = new Store(":memory:");
@@ -131,7 +178,10 @@ test("maintenance resets only the selected user, then clears papers without dele
     assert.ok(f.store.get("SELECT * FROM users WHERE id=?", userA.id));
     assert.equal(f.league.currentAttempt(userA.id)!.id, firstAttempt.id);
     resetUser(f.store, userA.id, true);
-    assert.equal(f.store.get("SELECT * FROM users WHERE id=?", userA.id), undefined);
+    assert.equal(
+      f.store.get("SELECT * FROM users WHERE id=?", userA.id),
+      undefined,
+    );
     assert.equal(f.league.currentAttempt(userA.id), undefined);
     for (const table of ["sessions", "accessTokens"])
       assert.equal(

@@ -25,6 +25,36 @@ import {
 
 export { paperPageTexts } from "./paper-input.js";
 
+export function describeTranslationError(error: unknown): string {
+  if (error instanceof z.ZodError) {
+    return `응답 형식 검증 실패: ${error.issues
+      .slice(0, 5)
+      .map((issue) => `${issue.path.join(".") || "response"} (${issue.code})`)
+      .join(", ")}`;
+  }
+  const name = error instanceof Error ? error.name : "UnknownError";
+  let message =
+    error instanceof Error ? error.message : "오류 상세를 확인할 수 없습니다.";
+  // SDK parse errors can contain an entire model response. Keep diagnostics,
+  // never the paper, response payload, or credentials in the admin error field.
+  if (message.startsWith("Failed to parse item:"))
+    message = "Codex 이벤트 응답을 파싱하지 못했습니다.";
+  message = message
+    .replace(/Bearer\s+[^\s"']+/gi, "Bearer [REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9_-]+/g, "[REDACTED]")
+    .replace(
+      /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+      "[REDACTED]",
+    )
+    .replace(
+      /((?:access_token|refresh_token|id_token|api_key|authorization)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .slice(0, 1000);
+  return `${name}: ${message}`;
+}
+
 export function translationState(
   store: Store,
   paperId: string,
@@ -197,10 +227,21 @@ async function runTranslationModel(
     modelReasoningEffort: "medium",
   });
   const timeout = AbortSignal.timeout(config.translation.timeoutMs);
-  const result = await thread.run(paperModelInput(paper, prompt), {
-    outputSchema,
-    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-  });
+  const result = await thread
+    .run(paperModelInput(paper, prompt), {
+      outputSchema,
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    })
+    .catch((error) => {
+      if (timeout.aborted && !signal?.aborted) {
+        const expired = new Error(
+          `번역 요청이 ${config.translation.timeoutMs / 1000}초 제한을 초과했습니다.`,
+        );
+        expired.name = "TimeoutError";
+        throw expired;
+      }
+      throw error;
+    });
   if (
     result.items.some((item) =>
       [
@@ -212,7 +253,11 @@ async function runTranslationModel(
     )
   )
     throw new Error("번역 중 도구 사용이 감지되어 결과를 폐기했습니다.");
-  return JSON.parse(result.finalResponse);
+  try {
+    return JSON.parse(result.finalResponse);
+  } catch {
+    throw new Error("Codex 번역 응답이 완전한 JSON 형식이 아닙니다.");
+  }
 }
 
 export function validatePaperTranslation(
@@ -608,14 +653,14 @@ export async function rerenderTranslations(
           : Date.now() + (attempt >= 3 ? 3600000 : 30000 * attempt),
         signal?.aborted
           ? null
-          : "원문 배치 갱신 실패. Codex 로그인과 사용 한도를 확인해 주세요.",
+          : `원문 배치 갱신: ${describeTranslationError(error)}`,
         Date.now(),
         job.paperId,
         owner,
       );
       if (!config || signal?.aborted) throw error;
       console.error(
-        `[translation] ${job.paperId}: 원문 배치 갱신 실패 · 재시도 대기`,
+        `[translation] ${job.paperId}: 원문 배치 갱신 실패 · ${describeTranslationError(error)} · 재시도 대기`,
       );
     }
   }
@@ -754,6 +799,15 @@ export function startTranslationWorker(store: Store, config: Config) {
     if (!job) return;
     const paper = store.getPaper(job.paperId)!;
     const page = job.completedPages + 1;
+    const started = Date.now();
+    let stage = job.verifiedJson
+      ? "저장된 검수 결과 확인"
+      : job.draftJson
+        ? "저장된 번역 확인"
+        : "논문 전체 번역";
+    console.log(
+      `[translation] ${paper.id}: ${stage} 시작 · ${paper.pageCount}쪽 · ${job.model} · 시도 ${job.attempts}`,
+    );
     try {
       let verified: TranslatedPaper;
       if (job.verifiedJson) {
@@ -779,6 +833,7 @@ export function startTranslationWorker(store: Store, config: Config) {
         console.log(
           `[translation] ${paper.id}: 전체 ${paper.pageCount}쪽 번역 완료 · 원문 대조 중`,
         );
+        stage = "원문 대조 검수";
         verified = await reviewPaperTranslation(
           paper,
           draft,
@@ -800,6 +855,7 @@ export function startTranslationWorker(store: Store, config: Config) {
       }
       const result = verified.pages[page - 1];
       controller.signal.throwIfAborted();
+      stage = `번역 이미지 생성 (${page}/${paper.pageCount})`;
       if (await saveTranslationPage(store, job, paper, result))
         console.log(
           `[translation] ${paper.id}: ${page}/${paper.pageCount} 페이지 완료${page === paper.pageCount ? " · 한국어 번역 준비 완료" : ""}`,
@@ -807,6 +863,7 @@ export function startTranslationWorker(store: Store, config: Config) {
     } catch (error) {
       const interrupted = controller.signal.aborted;
       const failed = !interrupted && job.attempts >= 3;
+      const detail = `${stage} · ${Math.round((Date.now() - started) / 1000)}초 · ${describeTranslationError(error)}`;
       store.run(
         `UPDATE paperTranslations SET status=?,attempts=?,nextAttemptAt=?,leaseOwner=NULL,
         leaseUntil=0,updatedAt=?,error=? WHERE paperId=? AND leaseOwner=?`,
@@ -816,15 +873,13 @@ export function startTranslationWorker(store: Store, config: Config) {
           ? 0
           : Date.now() + (failed ? 3600000 : 30000 * job.attempts),
         Date.now(),
-        interrupted
-          ? null
-          : "번역 처리 실패. Codex 로그인과 사용 한도를 확인해 주세요.",
+        interrupted ? null : detail,
         paper.id,
         job.leaseOwner!,
       );
       if (!interrupted)
         console.error(
-          `[translation] ${paper.id}: 페이지 ${page}, ${error instanceof Error ? error.name : "UnknownError"}, ${failed ? "1시간 후 재시도" : `재시도 ${job.attempts}/3`}`,
+          `[translation] ${paper.id}: ${detail} · ${failed ? "1시간 후 재시도" : `재시도 ${job.attempts}/3`}`,
         );
     }
   };
@@ -834,7 +889,7 @@ export function startTranslationWorker(store: Store, config: Config) {
       .catch((error) => {
         console.error(
           "[translation] 작업 실패:",
-          error instanceof Error ? error.name : "UnknownError",
+          describeTranslationError(error),
         );
       })
       .finally(() => {

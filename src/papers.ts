@@ -5,7 +5,10 @@ import { readFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PaperInput } from "./types.js";
-import { TRANSLATION_VERSION, TRANSLATION_VERSIONS } from "./translation-types.js";
+import {
+  TRANSLATION_VERSION,
+  TRANSLATION_VERSIONS,
+} from "./translation-types.js";
 import { KOREAN_FONT } from "./fonts.js";
 
 const MAX_PDF_BYTES = 40 * 1024 * 1024;
@@ -14,6 +17,8 @@ const MAX_TEXT_CHARS = 120_000;
 const MIN_TEXT_CHARS = 300;
 const MAX_RENDER_EDGE = 1_600;
 const MAX_RENDER_PIXELS = 2_500_000;
+// Embedded figures can be much larger than the final downscaled page canvas.
+const MAX_EMBEDDED_IMAGE_PIXELS = 32_000_000;
 const require = createRequire(import.meta.url);
 const pdfjsRoot = dirname(require.resolve("pdfjs-dist/package.json"));
 
@@ -95,7 +100,8 @@ export async function importPaper(
     useWorkerFetch: false,
     useWasm: false,
     isOffscreenCanvasSupported: false,
-    maxImageSize: MAX_RENDER_PIXELS,
+    maxImageSize: MAX_EMBEDDED_IMAGE_PIXELS,
+    stopAtErrors: true,
     canvasMaxAreaInBytes: MAX_RENDER_PIXELS * 4,
     standardFontDataUrl,
   });

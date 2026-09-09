@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { z } from "zod";
 import { mkdir, mkdtemp, rm, access } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { Server } from "node:http";
@@ -20,8 +21,34 @@ import {
   applyTranslationReview,
   rerenderTranslations,
   applyPaperLayout,
+  describeTranslationError,
 } from "../src/translation.js";
 import type { TranslationPage } from "../src/translation-types.js";
+
+test("translation diagnostics retain the failure reason without credentials or response payloads", () => {
+  const detail = describeTranslationError(
+    new Error(
+      "HTTP 401: invalid credentials; Bearer secret-value; api_key=sk-test-secret",
+    ),
+  );
+  assert.match(detail, /HTTP 401: invalid credentials/);
+  assert.doesNotMatch(detail, /secret-value|sk-test-secret/);
+  assert.doesNotMatch(
+    describeTranslationError(
+      new Error('Failed to parse item: {"paper":"private source"}'),
+    ),
+    /private source/,
+  );
+  const invalid = z
+    .object({ pages: z.array(z.number()) })
+    .safeParse({ pages: ["private source"] });
+  assert.equal(invalid.success, false);
+  if (!invalid.success) {
+    const diagnostic = describeTranslationError(invalid.error);
+    assert.match(diagnostic, /pages.0/);
+    assert.doesNotMatch(diagnostic, /private source/);
+  }
+});
 
 test("translation resumes saved pages, waits before timing, and serves only protected PNGs", async () => {
   const root = resolve("work");
