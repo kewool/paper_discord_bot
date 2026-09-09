@@ -6,6 +6,7 @@ import { XMLParser } from "fast-xml-parser";
 import type { Config } from "./config.js";
 import type { League } from "./league.js";
 import { importPaper } from "./papers.js";
+import { classifyPublication, weightedOrder } from "./paper-selection.js";
 
 const API = "https://export.arxiv.org/api/query";
 const REQUEST_GAP_MS = 3_000;
@@ -234,6 +235,73 @@ function requestGate(userAgent: string, signal?: AbortSignal) {
   };
 }
 
+export function arxivCandidateQueries(config: Config, now: number): URL[] {
+  const from = new Date(now - config.arxiv.lookbackDays * 86_400_000)
+    .toISOString()
+    .slice(0, 10)
+    .replaceAll("-", "");
+  const to = new Date(now).toISOString().slice(0, 10).replaceAll("-", "");
+  const dateQuery = `submittedDate:[${from}0000 TO ${to}2359]`;
+  const general = new URL(API);
+  general.searchParams.set("search_query", dateQuery);
+  general.searchParams.set("start", String(randomInt(301)));
+  general.searchParams.set("max_results", "80");
+  general.searchParams.set("sortBy", "submittedDate");
+  general.searchParams.set("sortOrder", "descending");
+  const { weights, preferredVenues } = config.paperSelection;
+  if (weights.preferred <= Math.min(weights.published, weights.unconfirmed))
+    return [general];
+  // Rotate a small set of venue names so the additional query stays bounded.
+  const names = weightedOrder(preferredVenues, () => 1).slice(0, 4);
+  const preferred = new URL(API);
+  preferred.searchParams.set(
+    "search_query",
+    `${dateQuery} AND (${names
+      .map((name) => `(jr:"${name}" OR co:"${name}")`)
+      .join(" OR ")})`,
+  );
+  preferred.searchParams.set("start", "0");
+  preferred.searchParams.set("max_results", "80");
+  preferred.searchParams.set("sortBy", "lastUpdatedDate");
+  preferred.searchParams.set("sortOrder", "descending");
+  return [general, preferred];
+}
+
+export async function fetchArxivCandidates(
+  config: Config,
+  now: number,
+  request: (url: string, maxBytes: number) => Promise<{ body: Buffer }>,
+  signal?: AbortSignal,
+): Promise<Candidate[]> {
+  const candidates = new Map<string, Candidate>();
+  let lastError: unknown;
+  for (const query of arxivCandidateQueries(config, now)) {
+    signal?.throwIfAborted();
+    try {
+      const feed = await request(query.href, MAX_ATOM_BYTES);
+      for (const candidate of parseAtom(feed.body.toString("utf8"))) {
+        const previous = candidates.get(candidate.baseId);
+        const version = (value: Candidate) =>
+          Number(value.versionedId.split("v")[1]);
+        if (!previous || version(candidate) > version(previous))
+          candidates.set(candidate.baseId, candidate);
+      }
+    } catch (error) {
+      if (signal?.aborted || error instanceof RetryableArxivError) throw error;
+      lastError = error;
+      console.warn("[arxiv] 일부 후보 검색을 완료하지 못했습니다.");
+    }
+  }
+  if (!candidates.size)
+    throw lastError ?? new Error("arXiv 응답에서 논문 후보를 찾지 못했습니다.");
+  const { weights, preferredVenues } = config.paperSelection;
+  return weightedOrder(
+    [...candidates.values()],
+    (candidate) =>
+      weights[classifyPublication(candidate, preferredVenues).tier],
+  );
+}
+
 export async function syncArxiv(
   league: League,
   config: Config,
@@ -280,28 +348,12 @@ export async function syncArxiv(
   const request = requestGate(config.arxiv.userAgent, options.signal);
   try {
     atomicState(league, now, false, null);
-    const from = new Date(now - config.arxiv.lookbackDays * 86_400_000)
-      .toISOString()
-      .slice(0, 10)
-      .replaceAll("-", "");
-    const to = new Date(now).toISOString().slice(0, 10).replaceAll("-", "");
-    const query = new URL(API);
-    query.searchParams.set(
-      "search_query",
-      `submittedDate:[${from}0000 TO ${to}2359]`,
+    const candidates = await fetchArxivCandidates(
+      config,
+      now,
+      request,
+      options.signal,
     );
-    query.searchParams.set("start", String(randomInt(301)));
-    query.searchParams.set("max_results", "80");
-    query.searchParams.set("sortBy", "submittedDate");
-    query.searchParams.set("sortOrder", "descending");
-    const feed = await request(query.href, MAX_ATOM_BYTES);
-    const candidates = parseAtom(feed.body.toString("utf8"));
-    for (let i = candidates.length - 1; i > 0; i--) {
-      const j = randomInt(i + 1);
-      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
-    }
-    if (!candidates.length)
-      throw new Error("arXiv 응답에서 논문 후보를 찾지 못했습니다.");
     let absAttempts = 0;
     for (const candidate of candidates) {
       if (imported >= limit || absAttempts >= 12) break;

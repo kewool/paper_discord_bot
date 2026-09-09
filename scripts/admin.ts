@@ -1,6 +1,10 @@
 import { loadConfig } from "../src/config.js";
 import { Store } from "../src/store.js";
 import { resetPapers, resetUser } from "../src/maintenance.js";
+import {
+  classifyPublication,
+  type PublicationMetadata,
+} from "../src/paper-selection.js";
 
 const [command = "status", ...args] = process.argv.slice(2);
 const id = args[0];
@@ -9,9 +13,33 @@ const store = new Store(config.dbPath);
 try {
   if (command === "papers") {
     console.table(
-      store.all(
-        "SELECT id,title,pageCount,demo FROM papers ORDER BY createdAt",
-      ),
+      store
+        .all<
+          {
+            id: string;
+            title: string;
+            pageCount: number;
+            demo: number;
+          } & PublicationMetadata
+        >(
+          `SELECT p.id,p.title,p.pageCount,p.demo,ai.journalRef,ai.comment FROM papers p
+         LEFT JOIN arxivImports ai ON ai.arxivId=(
+           SELECT arxivId FROM arxivImports WHERE paperId=p.id AND status='imported'
+           ORDER BY updatedAt DESC LIMIT 1
+         ) ORDER BY p.createdAt`,
+        )
+        .map(({ journalRef, comment, ...paper }) => {
+          const publication = classifyPublication(
+            { journalRef, comment },
+            config.paperSelection.preferredVenues,
+          );
+          return {
+            ...paper,
+            publication: publication.tier,
+            venue: publication.venue || "-",
+            weight: config.paperSelection.weights[publication.tier],
+          };
+        }),
     );
   } else if (command === "users") {
     console.table(

@@ -10,7 +10,7 @@
     "demo": "tsx scripts/demo.ts",
     "paper:import": "tsx scripts/import-paper.ts",
     "bot:register": "tsx scripts/register-commands.ts",
-    "test": "tsx --test tests/core.test.ts",
+    "test": "tsx --test tests/core.test.ts tests/paper-selection.test.ts tests/arxiv.test.ts",
     "test:browser": "playwright test",
     "grade:smoke": "tsx scripts/grade-smoke.ts",
     "admin": "tsx scripts/admin.ts",

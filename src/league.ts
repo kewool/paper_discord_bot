@@ -1,7 +1,12 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { DateTime } from "luxon";
 import type { Config } from "./config.js";
 import { Store } from "./store.js";
+import {
+  classifyPublication,
+  pickWeightedIndex,
+  type PublicationMetadata,
+} from "./paper-selection.js";
 import {
   type AppState,
   type Attempt,
@@ -45,8 +50,12 @@ export class League {
     return this.store.transaction(() => {
       const existing = this.store.getRound(window.day);
       if (existing) return existing;
-      const papers = this.store.all<{ id: string }>(
-        "SELECT id FROM papers WHERE demo=? ORDER BY id",
+      const papers = this.store.all<{ id: string } & PublicationMetadata>(
+        `SELECT p.id,ai.journalRef,ai.comment FROM papers p
+         LEFT JOIN arxivImports ai ON ai.arxivId=(
+           SELECT arxivId FROM arxivImports WHERE paperId=p.id AND status='imported'
+           ORDER BY updatedAt DESC LIMIT 1
+         ) WHERE p.demo=? ORDER BY p.id`,
         Number(this.config.demo),
       );
       if (!papers.length) return null;
@@ -59,7 +68,16 @@ export class League {
       const round: Round = {
         id: window.day,
         ...window,
-        paperId: pool[randomInt(pool.length)].id,
+        paperId:
+          pool[
+            pickWeightedIndex(pool, (paper) => {
+              const { tier } = classifyPublication(
+                paper,
+                this.config.paperSelection.preferredVenues,
+              );
+              return this.config.paperSelection.weights[tier];
+            })
+          ].id,
         readingMinutes: this.config.readingMinutes,
         writingMinutes: this.config.writingMinutes,
         model: this.config.model,

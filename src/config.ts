@@ -1,6 +1,10 @@
 import "dotenv/config";
 import { resolve } from "node:path";
 import { DateTime } from "luxon";
+import {
+  DEFAULT_PREFERRED_VENUES,
+  type PaperSelectionWeights,
+} from "./paper-selection.js";
 
 export interface Config {
   demo: boolean;
@@ -16,6 +20,10 @@ export interface Config {
   model: string;
   codexTimeoutMs: number;
   trustProxy: number;
+  paperSelection: {
+    weights: PaperSelectionWeights;
+    preferredVenues: readonly string[];
+  };
   arxiv: {
     enabled: boolean;
     poolTarget: number;
@@ -68,6 +76,25 @@ export function loadConfig(env = process.env): Config {
   const timeZone = env.TIME_ZONE || "Asia/Seoul";
   if (!DateTime.now().setZone(timeZone).isValid)
     throw new Error("TIME_ZONE이 올바르지 않습니다.");
+  const preferredVenues = env.PAPER_PREFERRED_VENUES?.trim()
+    ? [
+        ...new Set(
+          env.PAPER_PREFERRED_VENUES.split(",")
+            .map((name) => name.trim())
+            .filter(Boolean),
+        ),
+      ]
+    : [...DEFAULT_PREFERRED_VENUES];
+  if (
+    !preferredVenues.length ||
+    preferredVenues.length > 64 ||
+    preferredVenues.some(
+      (name) => name.length > 120 || /["\\\u0000-\u001f]/.test(name),
+    )
+  )
+    throw new Error(
+      "PAPER_PREFERRED_VENUES는 쉼표로 구분한 학회·저널 이름 1~64개여야 합니다.",
+    );
   return {
     demo,
     port,
@@ -82,6 +109,14 @@ export function loadConfig(env = process.env): Config {
     model: env.CODEX_MODEL || "gpt-5.6-terra",
     codexTimeoutMs: integer("CODEX_TIMEOUT_SECONDS", 180, 15, 600) * 1000,
     trustProxy: integer("TRUST_PROXY_HOPS", 0, 0, 5),
+    paperSelection: {
+      weights: {
+        preferred: integer("PAPER_WEIGHT_PREFERRED", 5, 1, 100),
+        published: integer("PAPER_WEIGHT_PUBLISHED", 2, 1, 100),
+        unconfirmed: integer("PAPER_WEIGHT_UNCONFIRMED", 1, 1, 100),
+      },
+      preferredVenues,
+    },
     arxiv: {
       enabled: !demo && env.ARXIV_ENABLED !== "false",
       poolTarget: integer("ARXIV_POOL_TARGET", 7, 1, 30),
