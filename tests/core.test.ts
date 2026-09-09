@@ -108,9 +108,9 @@ test("one-use invitation and expiry keep the web limited to reading", async () =
     const guildB = "700000000000000002";
     const channelA = "710000000000000001";
     const channelB = "710000000000000002";
-    f.store.saveGuildSettings(guildA, channelA);
     f.store.saveGuildSettings(guildB, channelB);
-    const access = issueAccess(f.league, user, guildA);
+    const access = issueAccess(f.league, user, guildA, channelA);
+    assert.equal(f.store.getGuildSettings(guildA), undefined);
     const raw = rawToken(access.url);
     assert.equal((await request("/")).status, 200);
     assert.equal((await request("/api/attempt/page/1")).status, 401);
@@ -371,11 +371,6 @@ test("Discord modal submission keeps ownership, deadlines, and feedback in Disco
   f.config.discord.guildId = "700000000000000001";
   f.config.discord.channelId = "700000000000000002";
   f.config.discord.allowedRoleId = "700000000000000003";
-  f.store.saveGuildSettings(
-    f.config.discord.guildId,
-    f.config.discord.channelId,
-    f.config.discord.allowedRoleId,
-  );
   let serial = 10n;
   const input = (
     data: object,
@@ -428,6 +423,13 @@ test("Discord modal submission keeps ownership, deadlines, and feedback in Disco
     assert.equal(calls.at(-1)!.body.data.flags, 64);
     f.league.finish(user.id);
     const deadline = f.league.currentAttempt(user.id)!.submitBy;
+    await handleInteraction(command("submit", []), f.league, f.config);
+    assert.equal(calls.at(-1)!.body.type, 9);
+    f.store.saveGuildSettings(
+      f.config.discord.guildId!,
+      f.config.discord.channelId!,
+      f.config.discord.allowedRoleId,
+    );
     await handleInteraction(command("submit", []), f.league, f.config);
     assert.match(calls.at(-1)!.body.data.content, /참가 역할/);
     await handleInteraction(command("submit"), f.league, f.config);
@@ -703,7 +705,12 @@ test("server admins configure their own channels and role gates entirely through
       ),
     );
     await handleInteraction(input(guildA, "paper"), f.league, f.config);
-    assert.match(latest().content, /\/setup/);
+    assert.match(latest().components[0].components[0].url, /#access=/);
+    await handleInteraction(input(guildA, "my-score"), f.league, f.config);
+    assert.match(latest().content, /아직 읽기 세션/);
+    await handleInteraction(input(guildA, "ranking"), f.league, f.config);
+    assert.match(latest().embeds[0].title, /전체 서버/);
+    assert.equal(f.store.getGuildSettings(guildA), undefined);
     await handleInteraction(input(guildA, "setup"), f.league, f.config);
     assert.match(latest().content, /서버 관리 권한/);
     assert.equal(f.store.getGuildSettings(guildA), undefined);
@@ -746,10 +753,11 @@ test("server admins configure their own channels and role gates entirely through
       f.config,
     );
     assert.match(latest().components[0].components[0].url, /#access=/);
-    const storedToken = f.store.get<{ guildId: string }>(
-      "SELECT guildId FROM accessTokens",
+    const storedToken = f.store.get<{ guildId: string; channelId: string }>(
+      "SELECT guildId,channelId FROM accessTokens",
     )!;
     assert.equal(storedToken.guildId, guildB);
+    assert.equal(storedToken.channelId, channelB);
     await handleInteraction(
       input(guildA, "setup", [], true, channelA, guildA),
       f.league,
@@ -910,7 +918,7 @@ test("daily rollover uses Seoul release time and saved attempts survive a new se
     );
     // Reopen the previous single-server schema with real saved reading/token records.
     f.store.db.exec(
-      "DROP TABLE guildAnnouncements; DROP TABLE guildSettings; ALTER TABLE sessions DROP COLUMN guildId; ALTER TABLE accessTokens DROP COLUMN guildId; PRAGMA user_version=2;",
+      "DROP TABLE guildAnnouncements; DROP TABLE guildSettings; ALTER TABLE sessions DROP COLUMN guildId; ALTER TABLE accessTokens DROP COLUMN guildId; ALTER TABLE sessions DROP COLUMN channelId; ALTER TABLE accessTokens DROP COLUMN channelId; PRAGMA user_version=2;",
     );
     const anotherStore = new Store(f.config.dbPath);
     try {

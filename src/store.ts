@@ -39,11 +39,11 @@ export class Store {
       CREATE INDEX IF NOT EXISTS attempts_queue ON attempts(gradingStatus,nextGradeAt);
       CREATE TABLE IF NOT EXISTS sessions (
         tokenHash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id), csrfToken TEXT NOT NULL, expiresAt INTEGER NOT NULL, roundId TEXT NOT NULL,
-        guildId TEXT NOT NULL DEFAULT ''
+        guildId TEXT NOT NULL DEFAULT '', channelId TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS accessTokens (
         tokenHash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id), roundId TEXT NOT NULL REFERENCES rounds(id),
-        expiresAt INTEGER NOT NULL, usedAt INTEGER, guildId TEXT NOT NULL DEFAULT ''
+        expiresAt INTEGER NOT NULL, usedAt INTEGER, guildId TEXT NOT NULL DEFAULT '', channelId TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS announcements (
         roundId TEXT PRIMARY KEY REFERENCES rounds(id), status TEXT NOT NULL,
@@ -76,6 +76,8 @@ export class Store {
         ["sessions", "roundId"],
         ["sessions", "guildId"],
         ["accessTokens", "guildId"],
+        ["sessions", "channelId"],
+        ["accessTokens", "channelId"],
       ]) {
         if (
           !this.all<{ name: string }>(`PRAGMA table_info(${table})`).some(
@@ -86,7 +88,7 @@ export class Store {
             `ALTER TABLE ${table} ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`,
           );
       }
-      this.db.exec("PRAGMA user_version=3");
+      this.db.exec("PRAGMA user_version=4");
     });
   }
   get<T>(sql: string, ...args: SQLInputValue[]): T | undefined {

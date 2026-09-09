@@ -297,10 +297,16 @@ export class League {
       };
     });
   }
-  state(user: User | null, csrfToken: string | null, guildId = ""): AppState {
+  state(
+    user: User | null,
+    csrfToken: string | null,
+    guildId = "",
+    channelId = "",
+  ): AppState {
     const round = this.ensureRound();
     const guild =
       user && guildId ? this.store.getGuildSettings(guildId) : undefined;
+    const returnChannelId = channelId || guild?.channelId;
     const attempt =
       user && round
         ? this.store.get<Attempt>(
@@ -313,9 +319,10 @@ export class League {
       serverNow: this.now(),
       demo: this.config.demo,
       authenticated: Boolean(user),
-      discordUrl: guild
-        ? `https://discord.com/channels/${guild.guildId}/${guild.channelId}`
-        : null,
+      discordUrl:
+        user && guildId && returnChannelId
+          ? `https://discord.com/channels/${guildId}/${returnChannelId}`
+          : null,
       user,
       csrfToken,
       round: round

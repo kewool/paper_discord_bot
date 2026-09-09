@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 export async function startApplication(config: Config) {
   if (!config.demo && !(config.discord.botToken && config.discord.clientId)) {
     throw new Error(
-      ".env에 DISCORD_BOT_TOKEN과 DISCORD_CLIENT_ID를 설정해 주세요. 각 서버 관리자는 Discord에서 /setup을 실행합니다. 로컬 체험은 npm run demo로 실행할 수 있습니다.",
+      ".env에 DISCORD_BOT_TOKEN과 DISCORD_CLIENT_ID를 설정해 주세요. 자동 공지가 필요한 서버만 /setup을 사용합니다. 로컬 체험은 npm run demo로 실행할 수 있습니다.",
     );
   }
   const store = new Store(config.dbPath);

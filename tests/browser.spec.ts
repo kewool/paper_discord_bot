@@ -99,6 +99,12 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
   await expect(page.locator("#discord-handoff")).toBeVisible();
   await expect(page.locator("#discord-handoff")).toContainText("/submit");
   await expect(
+    page.getByRole("link", { name: "디스코드로 돌아가기" }),
+  ).toHaveAttribute(
+    "href",
+    "https://discord.com/channels/700000000000000001/710000000000000001",
+  );
+  await expect(
     page.locator("form, textarea, #rankings, .grade-total"),
   ).toHaveCount(0);
   const ended = await page.evaluate(

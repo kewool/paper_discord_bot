@@ -262,7 +262,12 @@ async function sendPaperLink(
     id: interaction.user.id,
     displayName: interaction.user.globalName || interaction.user.username,
   };
-  const access = issueAccess(league, user, interaction.guildId || "");
+  const access = issueAccess(
+    league,
+    user,
+    interaction.guildId || "",
+    interaction.channelId || "",
+  );
   const expiresAt = Math.floor(access.expiresAt / 1000);
   const embed = new EmbedBuilder()
     .setColor(0x315c8c)
@@ -423,12 +428,7 @@ export async function handleInteraction(
       return;
     }
     const settings = league.store.getGuildSettings(interaction.guildId!);
-    if (!settings)
-      throw new AppError(
-        403,
-        "이 서버는 아직 설정되지 않았습니다. 서버 관리자가 /setup을 실행해 주세요.",
-      );
-    if (!isAllowed(interaction, settings))
+    if (settings && !isAllowed(interaction, settings))
       throw new AppError(
         403,
         "이 서버의 참가 역할이 있어야 사용할 수 있습니다.",

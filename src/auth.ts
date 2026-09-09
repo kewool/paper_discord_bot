@@ -20,6 +20,7 @@ interface Session {
   expiresAt: number;
   roundId: string;
   guildId: string;
+  channelId: string;
 }
 interface AccessToken {
   tokenHash: string;
@@ -28,6 +29,7 @@ interface AccessToken {
   expiresAt: number;
   usedAt: number | null;
   guildId: string;
+  channelId: string;
 }
 
 // Called only after Discord has authenticated the interaction and checked membership.
@@ -35,12 +37,8 @@ export function issueAccess(
   league: League,
   user: User,
   guildId = "",
+  channelId = "",
 ): { url: string; expiresAt: number } {
-  if (guildId && !league.store.getGuildSettings(guildId))
-    throw new AppError(
-      403,
-      "서버 관리자가 /setup으로 공지 채널을 먼저 설정해 주세요.",
-    );
   const round = league.ensureRound();
   if (!round)
     throw new AppError(
@@ -59,12 +57,13 @@ export function issueAccess(
       round.id,
     );
     league.store.run(
-      "INSERT INTO accessTokens(tokenHash,userId,roundId,expiresAt,usedAt,guildId) VALUES (?,?,?,?,NULL,?)",
+      "INSERT INTO accessTokens(tokenHash,userId,roundId,expiresAt,usedAt,guildId,channelId) VALUES (?,?,?,?,NULL,?,?)",
       digest(raw),
       user.id,
       round.id,
       expiresAt,
       guildId,
+      channelId,
     );
   });
   return { url: `${league.config.publicUrl}/#access=${raw}`, expiresAt };
@@ -98,7 +97,12 @@ export class Auth {
       session.userId,
     );
     return user
-      ? { user, csrfToken: session.csrfToken, guildId: session.guildId }
+      ? {
+          user,
+          csrfToken: session.csrfToken,
+          guildId: session.guildId,
+          channelId: session.channelId,
+        }
       : null;
   }
   sameOrigin(req: Request) {
@@ -123,6 +127,7 @@ export class Auth {
     roundId: string,
     expiresAt: number,
     guildId = "",
+    channelId = "",
   ) {
     const old: unknown = req.cookies?.[SESSION_COOKIE];
     if (typeof old === "string")
@@ -133,13 +138,14 @@ export class Auth {
     const raw = token();
     this.league.store.upsertUser(user);
     this.league.store.run(
-      "INSERT INTO sessions(tokenHash,userId,csrfToken,expiresAt,roundId,guildId) VALUES (?,?,?,?,?,?)",
+      "INSERT INTO sessions(tokenHash,userId,csrfToken,expiresAt,roundId,guildId,channelId) VALUES (?,?,?,?,?,?,?)",
       digest(raw),
       user.id,
       token(),
       expiresAt,
       roundId,
       guildId,
+      channelId,
     );
     this.league.store.run(
       "DELETE FROM sessions WHERE expiresAt<=?",
@@ -190,6 +196,7 @@ export class Auth {
         record.roundId,
         round!.closesAt,
         record.guildId,
+        record.channelId,
       );
     });
   }

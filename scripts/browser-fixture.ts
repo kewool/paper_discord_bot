@@ -21,10 +21,15 @@ const store = new Store(config.dbPath);
 await seedDemo(store, dataDir);
 store.close();
 const application = await startApplication(config);
-const invitation = issueAccess(application.league, {
-  id: "423456789012345678",
-  displayName: "브라우저 확인 참가자",
-});
+const invitation = issueAccess(
+  application.league,
+  {
+    id: "423456789012345678",
+    displayName: "브라우저 확인 참가자",
+  },
+  "700000000000000001",
+  "710000000000000001",
+);
 await writeFile(
   resolve("work/browser-invite.json"),
   JSON.stringify(invitation),

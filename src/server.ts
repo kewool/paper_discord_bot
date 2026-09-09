@@ -99,6 +99,7 @@ export function createApp(league: League, config: Config) {
         res.locals.session?.user || null,
         res.locals.session?.csrfToken || null,
         res.locals.session?.guildId || "",
+        res.locals.session?.channelId || "",
       ),
     ),
   );
