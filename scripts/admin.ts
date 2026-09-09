@@ -1,6 +1,7 @@
 import { loadConfig } from "../src/config.js";
 import { Store } from "../src/store.js";
 import { resetPapers, resetUser } from "../src/maintenance.js";
+import { queueTranslations, retryTranslation } from "../src/translation.js";
 import {
   classifyPublication,
   type PublicationMetadata,
@@ -40,6 +41,23 @@ try {
             weight: config.paperSelection.weights[publication.tier],
           };
         }),
+    );
+  } else if (command === "translations") {
+    console.table(
+      store.all(`SELECT p.id,p.title,t.status,t.completedPages AS readyPages,
+      p.pageCount,t.model,t.attempts,t.error FROM papers p
+      LEFT JOIN paperTranslations t ON t.paperId=p.id ORDER BY p.createdAt`),
+    );
+  } else if (command === "retry-translation" && id && args.length === 1) {
+    if (!config.translation.enabled)
+      throw new Error("TRANSLATION_ENABLED가 꺼져 있습니다.");
+    queueTranslations(store, config);
+    if (!retryTranslation(store, id))
+      throw new Error(
+        "대기 또는 실패 상태인 논문 ID를 지정해 주세요. 완료된 번역은 다시 생성하지 않습니다.",
+      );
+    console.log(
+      "저장된 번역 페이지를 유지하고 남은 페이지부터 다시 처리합니다.",
     );
   } else if (command === "users") {
     console.table(
@@ -81,6 +99,11 @@ try {
         : "미리보기입니다. 봇을 중지한 뒤 같은 명령에 --yes를 붙이면 삭제합니다.",
     );
   } else if (command === "status") {
+    console.table(
+      store.all(
+        "SELECT status,COUNT(*) AS count,SUM(completedPages) AS readyPages FROM paperTranslations GROUP BY status",
+      ),
+    );
     console.table(store.all("SELECT * FROM syncState"));
     console.table(
       store.all(
@@ -111,7 +134,7 @@ try {
     );
   } else
     throw new Error(
-      "사용법: node dist/scripts/admin.js status | papers | users | retry <제출 ID> | reset-user <사용자 ID> [--yes] | reset-papers [--yes]",
+      "사용법: node dist/scripts/admin.js status | papers | translations | users | retry <제출 ID> | retry-translation <논문 ID> | reset-user <사용자 ID> [--yes] | reset-papers [--yes]",
     );
 } catch (error) {
   console.error(error instanceof Error ? error.message : "관리 작업 실패");

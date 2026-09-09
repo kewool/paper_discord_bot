@@ -5,6 +5,7 @@ import { readFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PaperInput } from "./types.js";
+import { TRANSLATION_VERSION } from "./translation-types.js";
 
 const MAX_PDF_BYTES = 40 * 1024 * 1024;
 const MAX_PAGES = 40;
@@ -194,13 +195,29 @@ export async function renderPage(
   paper: PaperInput,
   page: number,
   watermark: string,
+  translation?: { artifactId: string; part: number },
 ): Promise<Buffer> {
   if (!Number.isInteger(page) || page < 1 || page > paper.pageCount)
     throw new Error("요청한 페이지 번호가 올바르지 않습니다.");
   if (!watermark.trim() || watermark.length > 1_000)
     throw new Error("워터마크 정보가 올바르지 않습니다.");
   const directory = resolve(paper.directory);
-  const imagePath = resolve(directory, `page-${page}.png`);
+  if (
+    translation &&
+    (!/^[a-f0-9-]{36}$/.test(translation.artifactId) ||
+      !Number.isInteger(translation.part) ||
+      translation.part < 1 ||
+      translation.part > 32)
+  )
+    throw new Error("번역 페이지 정보가 올바르지 않습니다.");
+  const imagePath = translation
+    ? resolve(
+        directory,
+        TRANSLATION_VERSION,
+        translation.artifactId,
+        `page-${page}-${translation.part}.png`,
+      )
+    : resolve(directory, `page-${page}.png`);
   if (!inside(directory, imagePath))
     throw new Error("페이지 경로가 올바르지 않습니다.");
   const source = await loadImage(await readFile(imagePath));
@@ -211,7 +228,7 @@ export async function renderPage(
   ) {
     throw new Error("저장된 페이지 이미지가 허용 범위를 벗어났습니다.");
   }
-  const canvas = createCanvas(source.width, source.height + 46);
+  const canvas = createCanvas(source.width, source.height + 26);
   const context = canvas.getContext("2d");
   context.drawImage(source, 0, 0);
   const stamp = watermark.replace(/[\r\n]+/g, " ").slice(0, 500);
@@ -231,19 +248,15 @@ export async function renderPage(
   }
   context.restore();
   context.fillStyle = "rgba(20, 20, 20, 0.82)";
-  context.fillRect(0, source.height, source.width, 46);
+  context.fillRect(0, source.height, source.width, 26);
   context.fillStyle = "#ffffff";
   context.font = `11px "${sansFont}"`;
   context.fillText(
-    `PERSONAL READING | ${stamp}`,
+    [paper.sourceUrl, paper.license, translation ? "번역" : ""]
+      .filter(Boolean)
+      .join(" · "),
     12,
     source.height + 17,
-    source.width - 24,
-  );
-  context.fillText(
-    `${paper.sourceUrl || "Original demo material"} | ${paper.license} | PNG conversion + watermark`,
-    12,
-    source.height + 34,
     source.width - 24,
   );
   return canvas.toBuffer("image/png");

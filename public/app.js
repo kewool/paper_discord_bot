@@ -6,9 +6,12 @@
     token = null,
     mode = "",
     page = 1,
+    zoom = 1,
     pages = 1,
     bitmap = null,
+    translationBitmaps = [],
     req = null,
+    translationReq = null,
     gen = 0,
     sync = 0,
     focused = document.hasFocus() && !document.hidden,
@@ -106,11 +109,20 @@
     }
     bitmap?.close();
     bitmap = null;
+    translationBitmaps.forEach((image) => image?.close());
+    translationBitmaps = [];
+    document.querySelectorAll(".translation-canvas").forEach((c) => {
+      c.width = 0;
+      c.height = 0;
+      c.style.width = "";
+    });
   }
   function stop() {
     gen++;
     req?.abort();
     req = null;
+    translationReq?.abort();
+    translationReq = null;
     clear();
   }
   function coverPaper() {
@@ -187,7 +199,7 @@
       name.textContent = state.user?.displayName || "참가자";
       const b = document.createElement("button");
       b.className = "btn secondary";
-      b.textContent = "웹 세션 종료";
+      b.textContent = "로그아웃";
       b.onclick = async () => {
         try {
           await api("/auth/logout", { method: "POST", body: "{}" });
@@ -212,7 +224,8 @@
     const d = $("#demo-banner");
     if (d) d.classList.toggle("hidden", !state?.demo);
     const a = state?.attempt,
-      k = `${state?.authenticated}-${!!token}-${state?.round?.id || "none"}-${a?.id || "none"}-${a?.phase || "none"}-${recordedEnd(a?.id) !== null}-${confirmedEnds.has(a?.id)}`;
+      tr = state?.translation,
+      k = `${state?.authenticated}-${!!token}-${state?.round?.id || "none"}-${a?.id || "none"}-${a?.phase || "none"}-${recordedEnd(a?.id) !== null}-${confirmedEnds.has(a?.id)}-${tr?.status || "none"}-${tr?.readyPages || 0}-${tr?.totalPages || 0}`;
     if (k !== mode) {
       mode = k;
       stop();
@@ -224,24 +237,30 @@
     reader.replaceChildren();
     if (token) {
       reader.innerHTML =
-        '<div class="card login-card"><div class="eyebrow">PRIVATE INVITATION</div><h3>오늘의 리딩 링크가 도착했습니다.</h3><p>개인 초대 링크를 확인하고 리그에 참여해 주세요.</p><button id="claim" class="btn coral">이 링크로 참여하기</button></div>';
+        '<div class="card login-card"><h1>오늘의 논문</h1><button id="claim" class="btn coral">참여하기</button></div>';
       $("#claim").onclick = () => busy("#claim", claim);
       return;
     }
     if (!state?.authenticated) {
-      reader.innerHTML = `<div class="hero"><div><div class="eyebrow">READ ONLY · PAPER LEAGUE</div><h1>오늘 읽은 한 편이<br>내일의 질문이 됩니다.</h1><p class="lede">디스코드에서 <strong>/paper</strong> 명령어를 사용하면 개인 열람 링크를 받을 수 있습니다.</p></div><div class="card login-card"><h3>Discord에서 참여 링크를 받아 주세요.</h3><p>웹에서는 논문을 읽고, 정리 제출과 결과 확인은 Discord에서 진행합니다.</p>${state?.demo ? '<button id="demo" class="btn coral">데모로 열람하기</button>' : ""}</div></div>`;
+      reader.innerHTML = `<div class="card login-card"><h1>논문 읽기</h1><p>Discord에서 <strong>/paper</strong>로 열람 링크를 받아 주세요.</p>${state?.demo ? '<button id="demo" class="btn coral">데모 열기</button>' : ""}</div>`;
       $("#demo")?.addEventListener("click", () => busy("#demo", demo));
       return;
     }
     if (!state.round && !state.attempt) {
-      reader.innerHTML =
-        '<div class="empty-state"><h1>오늘의 논문을 준비 중입니다.</h1><p>운영자가 라운드를 가져오면 열람할 수 있습니다.</p></div>';
+      reader.innerHTML = '<div class="empty-state"><h1>논문 준비 중</h1></div>';
       return;
     }
     const a = state.attempt;
     if (!a) {
       const r = state.round;
-      reader.innerHTML = `<div class="hero"><div><div class="eyebrow">${esc(r.day || "TODAY")} · READING</div><h1>오늘의 연구를<br>천천히 읽어보세요.</h1><p class="lede">읽기 시작 버튼을 누르면 ${Number(r.readingMinutes) || 0}분의 열람 시간이 시작됩니다.</p><div class="rules">다른 창이나 탭으로 이동하거나 이 페이지를 떠나면 남은 열람 시간이 즉시 종료됩니다. 다시 열 수 없으니 읽기에 집중할 수 있을 때 시작해 주세요.</div><br><button id="start" class="btn coral">읽기 시작하기 →</button></div><div class="card round-card"><h3>읽기 전 안내</h3><p class="muted">웹은 읽기만 제공합니다. 정리는 Discord의 <strong>/submit</strong> 명령어로 제출해 주세요.</p></div></div>`;
+      const tr = state.translation;
+      const translationReady =
+        !tr || tr.status === "disabled" || tr.status === "ready";
+      const progress =
+        tr && tr.status !== "disabled" && tr.status !== "ready"
+          ? `<p class="translation-progress">${tr.status === "failed" ? "번역 재시도 대기" : "번역 준비 중"} · ${Number(tr.readyPages) || 0} / ${Number(tr.totalPages) || 0}쪽</p>`
+          : "";
+      reader.innerHTML = `<div class="card ready-card"><h1>오늘의 논문</h1><p class="lede">읽기 ${Number(r.readingMinutes) || 0}분 · 작성 ${Number(r.writingMinutes) || 0}분</p><p class="rules">이 화면을 벗어나면 열람이 종료되며 다시 볼 수 없습니다.</p>${progress}<button id="start" class="btn coral" ${translationReady ? "" : "disabled"}>읽기 시작</button></div>`;
       $("#start").onclick = () => busy("#start", start);
       return;
     }
@@ -250,7 +269,7 @@
       (a.phase === "reading" || !confirmedEnds.has(a.id))
     ) {
       reader.innerHTML =
-        '<div id="focus-ended" class="status-card card"><div class="eyebrow">READING ENDED</div><h1>포커스를 벗어나 열람이 종료되었습니다.</h1><p class="lede">남은 열람 시간은 종료되었으며 이 논문을 다시 열 수 없습니다.</p><p>서버에 종료 시각을 전달하고 있습니다. 연결이 복구되면 디스코드 제출 마감을 확인합니다.</p></div>';
+        '<div id="focus-ended" class="status-card card"><h1>열람 종료</h1><p>화면을 벗어나 열람이 종료되었습니다. 다시 볼 수 없습니다.</p><p class="muted">연결 복구 후 제출 마감을 확인합니다.</p></div>';
     } else if (a.phase === "reading") reading(a);
     else handoff(a);
   }
@@ -292,8 +311,24 @@
     }
   }
   function reading(a) {
-    reader.innerHTML = `<div class="reader-shell"><div class="eyebrow">NOW READING · ${esc(a.paperTitle)}</div><div class="reading-bar"><h2>${esc(a.paperTitle)}</h2><strong id="timer" class="timer"></strong></div><div class="paper-frame concealed" id="paper-frame"><canvas id="paper-canvas"></canvas><div id="loading" class="muted">페이지를 불러오는 중입니다…</div><div id="focus-cover" role="status"><h3>열람 상태를 확인하고 있습니다.</h3><p>포커스를 벗어나면 열람이 즉시 종료되며 다시 열 수 없습니다.</p></div></div><div class="reader-controls"><button id="prev" class="btn secondary">← 이전</button><span id="count" class="page-count"></span><button id="next" class="btn secondary">다음 →</button><button id="finish" class="btn coral">읽기 종료하기</button></div></div>`;
+    const translated =
+      state.translation && state.translation.status !== "disabled";
+    reader.innerHTML = `<div class="reader-shell"><div class="reading-bar"><h2>${esc(a.paperTitle)}</h2><strong id="timer" class="timer" aria-label="남은 열람 시간"></strong></div><div class="paper-frame concealed" id="paper-frame"><div class="paper-columns"><section class="paper-panel"><h3>원문</h3><div class="paper-surface" id="paper-surface"><canvas id="paper-canvas"></canvas><div id="loading" class="muted">불러오는 중…</div></div></section>${translated ? '<section class="paper-panel translation-panel"><h3>한국어</h3><div id="translation-pages" class="translation-pages"></div><div id="translation-status" class="muted">불러오는 중…</div></section>' : ""}</div><div id="focus-cover" role="status">불러오는 중…</div></div><div class="reader-controls"><button id="prev" class="btn secondary">← 이전</button><span id="count" class="page-count"></span><button id="next" class="btn secondary">다음 →</button><button id="finish" class="btn coral">읽기 종료</button></div></div>`;
     pages = Number(a.pageCount) || 1;
+    const zoomControls = document.createElement("div");
+    zoomControls.className = "reader-zoom";
+    zoomControls.innerHTML =
+      '<button id="zoom-out" class="btn secondary" aria-label="페이지 축소">−</button><span id="zoom-level"></span><button id="zoom-in" class="btn secondary" aria-label="페이지 확대">+</button>';
+    $(".reader-controls").prepend(zoomControls);
+    $("#zoom-out").onclick = () => {
+      zoom = Math.max(1, zoom - 0.25);
+      applyZoom();
+    };
+    $("#zoom-in").onclick = () => {
+      zoom = Math.min(2.5, zoom + 0.25);
+      applyZoom();
+    };
+    applyZoom();
     $("#prev").onclick = () => change(-1);
     $("#next").onclick = () => change(1);
     $("#finish").onclick = () => busy("#finish", finish);
@@ -304,16 +339,32 @@
     const g = ++gen;
     req?.abort();
     req = new AbortController();
+    translationReq?.abort();
+    translationReq = new AbortController();
+    const translationController = translationReq;
+    const translationEnabled =
+      state.translation && state.translation.status !== "disabled";
+    if (translationEnabled) {
+      const status = $("#translation-status");
+      if (status) {
+        status.textContent = "불러오는 중…";
+        status.classList.remove("hidden");
+      }
+    }
     try {
-      const r = await fetch(`/api/attempt/page/${page}`, {
+      const originalResponse = await fetch(`/api/attempt/page/${page}`, {
         signal: req.signal,
         credentials: "same-origin",
       });
-      if (!r.ok)
+      if (!originalResponse.ok)
         throw Object.assign(new Error("페이지를 불러오지 못했습니다."), {
-          status: r.status,
+          status: originalResponse.status,
         });
-      const img = await createImageBitmap(await r.blob());
+      const img = await createImageBitmap(await originalResponse.blob());
+      if (g !== gen || !canShowPaper()) {
+        img.close();
+        return;
+      }
       const a = state?.attempt;
       if (g !== gen || !a || a.phase !== "reading" || !canShowPaper()) {
         img.close();
@@ -337,12 +388,15 @@
       c.height = img.height;
       c.style.width = `${img.width}px`;
       c.getContext("2d").drawImage(img, 0, 0);
+      applyZoom();
       $("#paper-frame").classList.remove("concealed");
       $("#focus-cover").hidden = true;
       $("#loading").classList.add("hidden");
       $("#count").textContent = `${page} / ${pages}`;
       $("#prev").disabled = page <= 1;
       $("#next").disabled = page >= pages;
+      if (translationEnabled)
+        void loadTranslations(g, page, translationController);
     } catch (e) {
       if (e.name === "AbortError") return;
       if (e.status === 401 || e.status === 410) {
@@ -353,8 +407,140 @@
       if (g === gen) req = null;
     }
   }
+  async function loadTranslations(g, requestedPage, controller) {
+    const tr = state?.translation;
+    if (!tr || tr.status === "disabled" || tr.status !== "ready") return;
+    let total = 1;
+    const canvases = [],
+      images = [];
+    let committed = false;
+    try {
+      for (let part = 1; part <= total; part++) {
+        if (g !== gen || requestedPage !== page || !canShowPaper()) return;
+        const current = state?.attempt;
+        if (!current || current.readingEndsAt - serverTime() <= 0) {
+          expire();
+          return;
+        }
+        const r = await fetch(
+          `/api/attempt/translation/${requestedPage}?part=${part}`,
+          { signal: controller.signal, credentials: "same-origin" },
+        );
+        if (!r.ok)
+          throw Object.assign(new Error("번역을 불러오지 못했습니다."), {
+            status: r.status,
+          });
+        if (part === 1) {
+          const rawParts = r.headers.get("X-Page-Parts") || "";
+          const parsedParts = Number(rawParts);
+          if (
+            !/^([1-9]|[12][0-9]|3[0-2])$/.test(rawParts) ||
+            !Number.isInteger(parsedParts)
+          )
+            throw Object.assign(
+              new Error("번역 페이지 수를 확인하지 못했습니다."),
+              { status: 502 },
+            );
+          total = parsedParts;
+        }
+        const img = await createImageBitmap(await r.blob());
+        if (g !== gen || requestedPage !== page || !canShowPaper()) {
+          img.close();
+          return;
+        }
+        if (
+          !state?.attempt ||
+          state.attempt.readingEndsAt - serverTime() <= 0
+        ) {
+          img.close();
+          expire();
+          return;
+        }
+        const c = document.createElement("canvas");
+        c.className = "translation-canvas";
+        c.width = img.width;
+        c.height = img.height;
+        c.style.width = `${img.width}px`;
+        c.getContext("2d").drawImage(img, 0, 0);
+        canvases.push(c);
+        images.push(img);
+      }
+      const host = $("#translation-pages");
+      if (!host || g !== gen || requestedPage !== page || !canShowPaper())
+        return;
+      host.replaceChildren(...canvases);
+      applyZoom();
+      translationBitmaps = images;
+      committed = true;
+      host.scrollTop = 0;
+      $("#translation-status")?.classList.add("hidden");
+    } catch (e) {
+      canvases.forEach((c) => {
+        c.width = 0;
+        c.height = 0;
+        c.remove();
+      });
+      if (e.name === "AbortError") return;
+      if (e.status === 401 || e.status === 410) {
+        clear();
+        await load();
+        return;
+      }
+      const status = $("#translation-status");
+      if (status && g === gen) {
+        status.textContent =
+          e.status === 409 || e.status === 503
+            ? "번역을 준비하지 못했습니다."
+            : "번역을 불러오지 못했습니다.";
+        status.classList.remove("hidden");
+        const retry = document.createElement("button");
+        retry.className = "btn secondary translation-retry";
+        retry.textContent = "다시 시도";
+        retry.onclick = () => loadPage();
+        status.append(" ", retry);
+      }
+    } finally {
+      if (!committed) {
+        images.forEach((image) => image.close());
+        canvases.forEach((c) => {
+          c.width = 0;
+          c.height = 0;
+          c.remove();
+        });
+      }
+      if (g === gen && translationReq === controller) translationReq = null;
+    }
+  }
+  function applyZoom() {
+    for (const host of document.querySelectorAll(
+      "#paper-surface,#translation-pages",
+    )) {
+      const style = getComputedStyle(host);
+      const width =
+        host.clientWidth -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight);
+      for (const canvas of host.querySelectorAll("canvas"))
+        if (canvas.width > 0)
+          canvas.style.width = `${Math.max(1, Math.floor(width * zoom))}px`;
+    }
+    if ($("#zoom-level"))
+      $("#zoom-level").textContent = `${Math.round(zoom * 100)}%`;
+    if ($("#zoom-out")) $("#zoom-out").disabled = zoom <= 1;
+    if ($("#zoom-in")) $("#zoom-in").disabled = zoom >= 2.5;
+  }
+  window.addEventListener("resize", applyZoom);
   function change(d) {
     page = Math.max(1, Math.min(pages, page + d));
+    stop();
+    $("#paper-frame")?.classList.add("concealed");
+    $("#translation-status")?.classList.remove("hidden");
+    $("#translation-pages")?.replaceChildren();
+    if ($("#translation-pages")) $("#translation-pages").scrollTop = 0;
+    if ($("#paper-surface")) $("#paper-surface").scrollTop = 0;
+    $("#loading")?.classList.remove("hidden");
+    $("#prev")?.toggleAttribute("disabled", page <= 1);
+    $("#next")?.toggleAttribute("disabled", page >= pages);
     loadPage();
   }
   async function finish() {
@@ -380,7 +566,7 @@
     )
       ? state.discordUrl
       : null;
-    reader.innerHTML = `<div id="discord-handoff" class="status-card card"><div class="eyebrow">READING COMPLETE</div><h1>${done ? "열람이 종료되었습니다." : expired ? "제출 마감이 지났습니다." : "디스코드에서 정리를 제출해 주세요."}</h1><p class="lede">${done ? "제출 상태와 결과는 디스코드 /my-score에서 확인해 주세요." : expired ? "제출 마감 시간이 지났습니다." : "Discord의 <strong>/submit</strong> 명령어로 정리를 제출해 주세요."}</p>${done ? "" : '<strong id="timer" class="timer"></strong>'}${discordUrl ? '<br><br><a class="btn coral" target="_blank" rel="noopener noreferrer" href="' + esc(discordUrl) + '">디스코드로 돌아가기 ↗</a>' : '<p class="muted">로컬 데모는 열람만 체험합니다. 실제 제출은 운영 Discord에서 진행해 주세요.</p>'}</div>`;
+    reader.innerHTML = `<div id="discord-handoff" class="status-card card"><h1>${expired && !done ? "제출 마감" : "열람 종료"}</h1>${done ? "<p>Discord <strong>/my-score</strong>에서 결과를 확인해 주세요.</p>" : expired ? "" : '<p>Discord <strong>/submit</strong>으로 제출해 주세요.</p><strong id="timer" class="timer"></strong>'}${discordUrl ? '<br><br><a class="btn coral" target="_blank" rel="noopener noreferrer" href="' + esc(discordUrl) + '">디스코드로 돌아가기 ↗</a>' : ""}</div>`;
   }
   function tick() {
     if (focused && (!document.hasFocus() || document.hidden)) conceal();

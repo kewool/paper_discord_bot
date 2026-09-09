@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { translationState } from "./translation.js";
 import { DateTime } from "luxon";
 import type { Config } from "./config.js";
 import { Store } from "./store.js";
@@ -153,6 +154,14 @@ export class League {
         round.id,
       );
       if (existing) return this.view(existing);
+      if (
+        this.config.translation.enabled &&
+        translationState(this.store, round.paperId, true).status !== "ready"
+      )
+        throw new AppError(
+          503,
+          "한국어 번역을 준비 중입니다. 완료되면 읽기를 시작할 수 있으며, 아직 제한시간은 시작되지 않았습니다.",
+        );
       const now = this.now();
       if (now < round.opensAt || now >= round.closesAt)
         throw new AppError(410, "오늘 라운드가 마감되었습니다.");
@@ -354,6 +363,14 @@ export class League {
           }
         : null,
       attempt: attempt ? this.readerView(this.view(attempt)) : null,
+      translation:
+        user && round
+          ? translationState(
+              this.store,
+              round.paperId,
+              this.config.translation.enabled,
+            )
+          : null,
       timeZone: this.config.timeZone,
       releaseHour: this.config.releaseHour,
     };

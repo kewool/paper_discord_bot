@@ -162,6 +162,50 @@ export function createApp(league: League, config: Config) {
       throw new AppError(410, "이 라운드의 열람이 종료되었습니다.");
     res.type("png").set("Content-Disposition", "inline").send(png);
   });
+  app.get(
+    "/api/attempt/translation/:page",
+    requireSession,
+    async (req, res) => {
+      if (!config.translation.enabled)
+        throw new AppError(404, "한국어 번역이 비활성화되어 있습니다.");
+      if (
+        !/^\d{1,2}$/.test(String(req.params.page)) ||
+        !/^\d{1,2}$/.test(String(req.query.part ?? "1"))
+      )
+        throw new AppError(404, "존재하지 않는 번역 페이지입니다.");
+      const userId = res.locals.session.user.id as string;
+      const { paper, attempt } = league.readable(userId);
+      const page = Number(req.params.page),
+        part = Number(req.query.part ?? "1");
+      if (page < 1 || page > paper.pageCount || part < 1 || part > 32)
+        throw new AppError(404, "존재하지 않는 번역 페이지입니다.");
+      const translation = league.store.get<{
+        partCount: number;
+        artifactId: string;
+      }>(
+        `SELECT tp.partCount,tp.artifactId FROM translatedPages tp JOIN paperTranslations t ON t.paperId=tp.paperId
+       WHERE tp.paperId=? AND tp.page=? AND t.status='ready'`,
+        paper.id,
+        page,
+      );
+      if (!translation) throw new AppError(409, "한국어 번역을 준비 중입니다.");
+      if (part > translation.partCount)
+        throw new AppError(404, "존재하지 않는 번역 페이지입니다.");
+      const stamp = `DISCORD ${userId} | ${attempt.roundId} | EXPIRES ${new Date(attempt.readingEndsAt).toISOString()}`;
+      const png = await renderPage(paper, page, stamp, {
+        artifactId: translation.artifactId,
+        part,
+      });
+      const fresh = league.readable(userId);
+      if (fresh.attempt.id !== attempt.id)
+        throw new AppError(410, "이 라운드의 열람이 종료되었습니다.");
+      res
+        .type("png")
+        .set("Content-Disposition", "inline")
+        .set("X-Page-Parts", String(translation.partCount))
+        .send(png);
+    },
+  );
   // Only this asset directory is public; paper images and extracted text are never mounted.
   const publicDir = resolve(
     fileURLToPath(new URL("../../public/", import.meta.url)),

@@ -70,6 +70,19 @@ export class Store {
       CREATE TABLE IF NOT EXISTS sourceLocks (
         name TEXT PRIMARY KEY, owner TEXT NOT NULL, expiresAt INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS paperTranslations (
+        paperId TEXT PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'pending', model TEXT NOT NULL, version TEXT NOT NULL,
+        completedPages INTEGER NOT NULL DEFAULT 0, glossaryJson TEXT NOT NULL DEFAULT '[]',
+        attempts INTEGER NOT NULL DEFAULT 0, nextAttemptAt INTEGER NOT NULL DEFAULT 0,
+        leaseOwner TEXT, leaseUntil INTEGER NOT NULL DEFAULT 0, updatedAt INTEGER NOT NULL,
+        error TEXT
+      );
+      CREATE TABLE IF NOT EXISTS translatedPages (
+        paperId TEXT NOT NULL REFERENCES paperTranslations(paperId) ON DELETE CASCADE,
+        page INTEGER NOT NULL, contentJson TEXT NOT NULL, partCount INTEGER NOT NULL, artifactId TEXT NOT NULL,
+        createdAt INTEGER NOT NULL, PRIMARY KEY(paperId,page)
+      );
     `);
     this.transaction(() => {
       for (const [table, column] of [
@@ -88,7 +101,7 @@ export class Store {
             `ALTER TABLE ${table} ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`,
           );
       }
-      this.db.exec("PRAGMA user_version=4");
+      this.db.exec("PRAGMA user_version=5");
     });
   }
   get<T>(sql: string, ...args: SQLInputValue[]): T | undefined {

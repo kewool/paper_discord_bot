@@ -1,3 +1,5 @@
+import type { TranslationState } from "./translation-types.js";
+
 export const RUBRIC = [
   { key: "understanding", label: "문제와 핵심 기여", max: 25 },
   { key: "methodology", label: "방법론 이해", max: 25 },
@@ -102,6 +104,7 @@ export interface AppState {
   csrfToken: string | null;
   round: Omit<Round, "paperId" | "model" | "rubricVersion"> | null;
   attempt: ReaderAttemptView | null;
+  translation: TranslationState | null;
   timeZone: string;
   releaseHour: number;
 }

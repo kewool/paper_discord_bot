@@ -1,9 +1,10 @@
 .demo-banner {
-  padding: 12px 24px;
-  text-align: center;
+  padding: 3px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
   background: #ffe6bb;
   color: #72511b;
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1.6;
 }
 .hidden {
@@ -11,6 +12,7 @@
 }
 @media print {
   #paper-canvas,
+  .translation-canvas,
   .paper-frame,
   .reader-controls {
     display: none !important;
@@ -50,11 +52,11 @@ textarea:focus-visible {
   outline-offset: 3px;
 }
 .topbar {
-  height: 76px;
-  padding: 0 clamp(20px, 5vw, 72px);
+  height: 60px;
+  padding: 0 clamp(16px, 3vw, 32px);
   display: flex;
   align-items: center;
-  gap: 44px;
+  gap: 14px;
   border-bottom: 1px solid #dcd4c6;
   background: #f7f2e8ee;
   backdrop-filter: blur(12px);
@@ -151,9 +153,9 @@ nav a:focus {
   font: inherit;
 }
 .page-section {
-  max-width: 1180px;
+  max-width: 1760px;
   margin: 0 auto;
-  padding: clamp(54px, 8vw, 100px) clamp(20px, 4vw, 50px);
+  padding: 24px clamp(16px, 3vw, 32px);
 }
 .eyebrow {
   font:
@@ -242,6 +244,19 @@ h2 {
   text-align: center;
   padding: 42px;
 }
+.login-card,
+.ready-card {
+  max-width: 620px;
+  margin: 40px auto;
+}
+.login-card h1,
+.ready-card h1,
+.empty-state h1 {
+  margin: 0 0 20px;
+  font-family: inherit;
+  font-size: 28px;
+  line-height: 1.3;
+}
 .login-card p {
   color: var(--muted);
   line-height: 1.7;
@@ -251,7 +266,14 @@ h2 {
   color: var(--muted);
 }
 .reader-shell {
-  margin-top: 25px;
+  margin-top: 0;
+}
+.reading-bar h2 {
+  margin: 0;
+  font-family: inherit;
+  font-size: clamp(18px, 2vw, 26px);
+  line-height: 1.4;
+  min-width: 0;
 }
 .reading-bar {
   display: flex;
@@ -263,6 +285,8 @@ h2 {
 .timer {
   font: 500 21px "DM Mono";
   color: var(--coral);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 .timer.warning {
   color: #c44732;
@@ -272,12 +296,12 @@ h2 {
   background: #303945;
   border-radius: 6px;
   min-height: 400px;
-  display: grid;
-  place-items: center;
+  display: block;
   overflow: hidden;
   box-shadow: var(--shadow);
 }
 .paper-frame.concealed #paper-canvas,
+.paper-frame.concealed .translation-canvas,
 .paper-frame.concealed #loading {
   visibility: hidden;
 }
@@ -306,6 +330,83 @@ h2 {
   max-width: 100%;
   height: auto;
   user-select: none;
+}
+.paper-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+  padding: 16px;
+}
+.paper-panel {
+  min-width: 0;
+  background: #fffdf8;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.paper-panel > h3 {
+  margin: 0;
+  padding: 14px 18px;
+  color: var(--navy);
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.paper-surface,
+.translation-pages {
+  min-height: 400px;
+  max-height: min(76vh, 1100px);
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  align-content: start;
+  background: #303945;
+}
+.paper-surface #loading,
+.translation-pages + #translation-status {
+  padding: 24px;
+  color: #fffdf8;
+}
+.translation-pages {
+  gap: 12px;
+  padding: 12px;
+}
+.translation-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  user-select: none;
+}
+#translation-status {
+  padding: 14px 18px;
+  background: #fffdf8;
+}
+.translation-retry {
+  margin-left: 8px;
+  padding: 7px 11px;
+  font-size: 12px;
+}
+.translation-progress {
+  color: #68717a;
+  font-size: 13px;
+  line-height: 1.7;
+}
+#paper-canvas,
+.translation-canvas {
+  max-width: none;
+}
+.paper-columns:not(:has(.translation-panel)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.reader-zoom {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.reader-zoom .btn {
+  padding: 9px 13px;
 }
 .reader-controls {
   display: flex;
@@ -356,8 +457,8 @@ footer {
 }
 @media (max-width: 760px) {
   .topbar {
-    height: 64px;
-    gap: 18px;
+    height: 56px;
+    gap: 12px;
   }
   .topbar nav {
     display: none;
@@ -386,8 +487,8 @@ footer {
     gap: 28px;
   }
   .page-section {
-    padding-top: 55px;
-    padding-bottom: 55px;
+    padding-top: 18px;
+    padding-bottom: 18px;
   }
   .round-card {
     padding: 23px;
@@ -400,10 +501,20 @@ footer {
   .paper-frame {
     min-height: 250px;
   }
+  .paper-columns {
+    grid-template-columns: 1fr;
+    padding: 8px;
+  }
+  .paper-surface,
+  .translation-pages {
+    max-height: 65vh;
+    min-height: 250px;
+  }
 }
 
 .status-card h1 {
-  font-size: clamp(30px, 4vw, 42px);
+  font-family: inherit;
+  font-size: 28px;
   word-break: keep-all;
   line-height: 1.3;
 }

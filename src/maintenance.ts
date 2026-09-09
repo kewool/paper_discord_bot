@@ -54,6 +54,8 @@ export function resetPapers(store: Store, dataDir: string, apply = false) {
       "guildAnnouncements",
       "rounds",
       "arxivImports",
+      "translatedPages",
+      "paperTranslations",
       "papers",
       "syncState",
       "sourceLocks",

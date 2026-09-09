@@ -17,39 +17,91 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
   const invitation = JSON.parse(
     await readFile("work/browser-invite.json", "utf8"),
   );
+  let holdTranslation = true;
+  await page.route("**/api/state", async (route) => {
+    const response = await route.fetch();
+    const state = await response.json();
+    if (holdTranslation && state.authenticated && !state.attempt)
+      state.translation = {
+        status: "translating",
+        readyPages: 1,
+        totalPages: 3,
+      };
+    await route.fulfill({ response, json: state });
+  });
   await page.goto(invitation.url);
-  await expect(
-    page.getByRole("button", { name: "이 링크로 참여하기" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "참여하기" })).toBeVisible();
   await expect(page).not.toHaveURL(/access=/);
-  await page.getByRole("button", { name: "이 링크로 참여하기" }).click();
-  await expect(
-    page.getByRole("button", { name: "읽기 시작하기" }),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "참여하기" }).click();
+  await expect(page.locator("#start")).toBeDisabled();
+  await expect(page.locator(".translation-progress")).toContainText("1 / 3");
+  holdTranslation = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.getByRole("button", { name: "읽기 시작" })).toBeVisible();
   await expect(page.locator("#demo-banner")).toBeVisible();
   await page.screenshot({ path: "work/browser-ready.png", fullPage: true });
   const other = await browser.newContext();
   const duplicate = await other.newPage();
   await duplicate.goto(invitation.url);
-  await duplicate.getByRole("button", { name: "이 링크로 참여하기" }).click();
+  await duplicate.getByRole("button", { name: "참여하기" }).click();
   await expect(duplicate.locator("#notice")).toContainText("이미 사용");
   await expect(
-    duplicate.getByRole("button", { name: "읽기 시작하기" }),
+    duplicate.getByRole("button", { name: "읽기 시작" }),
   ).toHaveCount(0);
   await other.close();
 
-  await page.getByRole("button", { name: "읽기 시작하기" }).click();
+  await page.getByRole("button", { name: "읽기 시작" }).click();
   await expect
     .poll(() =>
       page.locator("#paper-canvas").evaluate((c: HTMLCanvasElement) => c.width),
+    )
+    .toBeGreaterThan(0);
+  await expect(page.locator(".translation-canvas")).toHaveCount(1);
+  await expect
+    .poll(() =>
+      page
+        .locator(".translation-canvas")
+        .first()
+        .evaluate((c: HTMLCanvasElement) => c.width),
     )
     .toBeGreaterThan(0);
   const initialTimer = await page.locator("#timer").innerText();
   await expect(page.locator("#timer")).not.toHaveText(initialTimer);
   await page.getByRole("button", { name: "다음 →" }).click();
   await expect(page.locator("#count")).toHaveText("2 / 3");
+  await expect
+    .poll(() =>
+      page
+        .locator(".translation-canvas")
+        .first()
+        .evaluate((c: HTMLCanvasElement) => c.width),
+    )
+    .toBeGreaterThan(0);
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({ path: "work/browser-reading.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "페이지 확대", exact: true }).click();
+  await page.getByRole("button", { name: "페이지 확대", exact: true }).click();
+  await expect(page.locator("#zoom-level")).toHaveText("150%");
+  expect(
+    await page
+      .locator("#paper-canvas")
+      .evaluate(
+        (c) => c.getBoundingClientRect().width > c.parentElement!.clientWidth,
+      ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "work/browser-bilingual-mobile.png",
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "페이지 축소", exact: true }).click();
+  await page.getByRole("button", { name: "페이지 축소", exact: true }).click();
   const original = await page.evaluate(
     async () => (await (await fetch("/api/state")).json()).attempt,
   );
@@ -67,10 +119,14 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
     ) as HTMLCanvasElement | null;
     return {
       immediatelyCleared: !canvas || canvas.width === 0,
+      translationCleared: [
+        ...document.querySelectorAll<HTMLCanvasElement>(".translation-canvas"),
+      ].every((c) => c.width === 0),
       at: Date.now(),
     };
   });
   expect(lostFocus.immediatelyCleared).toBe(true);
+  expect(lostFocus.translationCleared).toBe(true);
   await expect(page.locator("#focus-ended")).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(page.locator("#paper-canvas")).toHaveCount(0);
@@ -116,6 +172,11 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
     async () => (await fetch("/api/attempt/page/1")).status,
   );
   expect(expiredStatus).toBe(410);
+  expect(
+    await page.evaluate(
+      async () => (await fetch("/api/attempt/translation/1?part=1")).status,
+    ),
+  ).toBe(410);
   await page.reload();
   await expect(page.locator("#discord-handoff")).toBeVisible();
   await expect(page.locator("#paper-canvas")).toHaveCount(0);
@@ -139,8 +200,8 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
     ),
   ).toBe(true);
   expect(errors).toEqual([]);
-  await page.getByRole("button", { name: "웹 세션 종료" }).click();
+  await page.getByRole("button", { name: "로그아웃" }).click();
   await expect(
-    page.getByText("Discord에서 참여 링크를 받아 주세요."),
+    page.getByText("Discord에서 /paper로 열람 링크를 받아 주세요."),
   ).toBeVisible();
 });

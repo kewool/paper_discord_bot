@@ -19,6 +19,11 @@ export interface Config {
   releaseHour: number;
   model: string;
   codexTimeoutMs: number;
+  translation: {
+    enabled: boolean;
+    model: string;
+    timeoutMs: number;
+  };
   trustProxy: number;
   paperSelection: {
     weights: PaperSelectionWeights;
@@ -108,6 +113,13 @@ export function loadConfig(env = process.env): Config {
     timeZone,
     model: env.CODEX_MODEL || "gpt-5.6-terra",
     codexTimeoutMs: integer("CODEX_TIMEOUT_SECONDS", 180, 15, 600) * 1000,
+    translation: {
+      enabled:
+        env.TRANSLATION_ENABLED !== "false" &&
+        (!demo || env.TRANSLATION_ENABLED === "true"),
+      model: env.TRANSLATION_MODEL || env.CODEX_MODEL || "gpt-5.6-terra",
+      timeoutMs: integer("TRANSLATION_TIMEOUT_SECONDS", 300, 30, 900) * 1000,
+    },
     trustProxy: integer("TRUST_PROXY_HOPS", 0, 0, 5),
     paperSelection: {
       weights: {

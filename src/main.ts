@@ -6,6 +6,7 @@ import { startGradingWorker } from "./grader.js";
 import { startBot } from "./bot.js";
 import { startArxivWorker } from "./arxiv.js";
 import { pathToFileURL } from "node:url";
+import { startTranslationWorker } from "./translation.js";
 
 export async function startApplication(config: Config) {
   if (!config.demo && !(config.discord.botToken && config.discord.clientId)) {
@@ -32,10 +33,12 @@ export async function startApplication(config: Config) {
   );
   const worker = startGradingWorker(league, config);
   const source = startArxivWorker(league, config);
+  const translations = startTranslationWorker(store, config);
   let bot;
   try {
     bot = await startBot(league, config);
   } catch (error) {
+    await translations.stop();
     await source.stop();
     await worker.stop();
     server.close();
@@ -50,6 +53,7 @@ export async function startApplication(config: Config) {
     if (stopping) return;
     stopping = true;
     await bot.stop();
+    await translations.stop();
     await source.stop();
     await worker.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
