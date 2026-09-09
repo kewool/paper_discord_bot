@@ -5,13 +5,8 @@
   let state = null,
     token = null,
     mode = "",
-    page = 1,
     zoom = 1,
     pages = 1,
-    bitmap = null,
-    translationBitmaps = [],
-    req = null,
-    translationReq = null,
     gen = 0,
     sync = 0,
     focused = document.hasFocus() && !document.hidden,
@@ -19,6 +14,12 @@
     lossVersion = 0,
     verifiedFocusVersion = -1,
     lastFocusLostAt = null;
+  let observer = null,
+    documentScroll = null,
+    activeLoads = 0,
+    loadQueue = [];
+  const requests = new Set();
+  const pageBitmaps = new Map();
   const endedAttempts = new Map();
   const finishingAttempts = new Set();
   const confirmedEnds = new Set();
@@ -101,28 +102,25 @@
     }
   }
   function clear() {
-    const c = $("#paper-canvas");
-    if (c) {
-      c.width = 0;
-      c.height = 0;
-      c.style.width = "";
-    }
-    bitmap?.close();
-    bitmap = null;
-    translationBitmaps.forEach((image) => image?.close());
-    translationBitmaps = [];
-    document.querySelectorAll(".translation-canvas").forEach((c) => {
-      c.width = 0;
-      c.height = 0;
-      c.style.width = "";
-    });
+    observer?.disconnect();
+    observer = null;
+    documentScroll = null;
+    loadQueue = [];
+    pageBitmaps.forEach((image) => image.close());
+    pageBitmaps.clear();
+    document
+      .querySelectorAll(".source-canvas,.translation-canvas")
+      .forEach((c) => {
+        c.width = 0;
+        c.height = 0;
+        c.style.width = "";
+      });
   }
   function stop() {
     gen++;
-    req?.abort();
-    req = null;
-    translationReq?.abort();
-    translationReq = null;
+    requests.forEach((controller) => controller.abort());
+    requests.clear();
+    activeLoads = 0;
     clear();
   }
   function coverPaper() {
@@ -304,7 +302,6 @@
       state.attempt = d.attempt;
       if (version !== lossVersion || !hasReaderFocus()) recordEnd(d.attempt);
       mode = "";
-      page = 1;
       render();
     } catch (e) {
       msg(e.message);
@@ -313,13 +310,26 @@
   function reading(a) {
     const translated =
       state.translation && state.translation.status !== "disabled";
-    reader.innerHTML = `<div class="reader-shell"><div class="reading-bar"><h2>${esc(a.paperTitle)}</h2><strong id="timer" class="timer" aria-label="남은 열람 시간"></strong></div><div class="paper-frame concealed" id="paper-frame"><div class="paper-columns"><section class="paper-panel"><h3>원문</h3><div class="paper-surface" id="paper-surface"><canvas id="paper-canvas"></canvas><div id="loading" class="muted">불러오는 중…</div></div></section>${translated ? '<section class="paper-panel translation-panel"><h3>한국어 <span id="translation-meta" class="translation-meta"></span></h3><div id="translation-pages" class="translation-pages"></div><div id="translation-status" class="muted">불러오는 중…</div></section>' : ""}</div><div id="focus-cover" role="status">불러오는 중…</div></div><div class="reader-controls"><button id="prev" class="btn secondary">← 이전</button><span id="count" class="page-count"></span><button id="next" class="btn secondary">다음 →</button><button id="finish" class="btn coral">읽기 종료</button></div></div>`;
     pages = Number(a.pageCount) || 1;
-    const zoomControls = document.createElement("div");
-    zoomControls.className = "reader-zoom";
-    zoomControls.innerHTML =
-      '<button id="zoom-out" class="btn secondary" aria-label="페이지 축소">−</button><span id="zoom-level"></span><button id="zoom-in" class="btn secondary" aria-label="페이지 확대">+</button>';
-    $(".reader-controls").prepend(zoomControls);
+    const translationParts = Array.isArray(state.translation?.parts)
+      ? state.translation.parts
+      : [];
+    const documentGroups = Array.from({ length: pages }, (_, index) => {
+      const number = index + 1;
+      const source = `<div class="document-group source-group" data-kind="source" data-page="${number}"><div class="page-placeholder">원문 ${number}</div></div>`;
+      if (!translated) return source;
+      const partCount = Math.max(
+        1,
+        Math.min(32, Number(translationParts[index]) || 1),
+      );
+      const sheets = Array.from(
+        { length: partCount },
+        (_, part) =>
+          `<div class="document-group translation-sheet" data-kind="translation" data-page="${number}" data-part="${part + 1}"><div class="page-placeholder">한국어 ${number}-${part + 1}</div></div>`,
+      ).join("");
+      return `<section class="document-pair"><div class="document-side"><h3>원문 ${number}</h3>${source}</div><div class="document-side translation-side"><h3>한국어 ${number}</h3><div class="translation-stack">${sheets}</div></div></section>`;
+    }).join("");
+    reader.innerHTML = `<div class="reader-shell"><div class="reading-bar"><h2>${esc(a.paperTitle)}</h2><div class="reader-actions"><strong id="timer" class="timer" aria-label="남은 열람 시간"></strong><div class="reader-zoom"><button id="zoom-out" class="btn secondary" aria-label="페이지 축소">−</button><span id="zoom-level"></span><button id="zoom-in" class="btn secondary" aria-label="페이지 확대">+</button></div><button id="finish" class="btn coral">읽기 종료</button></div></div><div class="paper-frame concealed" id="paper-frame"><div id="paper-document" class="paper-document ${translated ? "paired-document" : "single-document"}">${documentGroups}</div><div id="focus-cover" role="status">불러오는 중…</div></div></div>`;
     $("#zoom-out").onclick = () => {
       zoom = Math.max(1, zoom - 0.25);
       applyZoom();
@@ -329,223 +339,203 @@
       applyZoom();
     };
     applyZoom();
-    $("#prev").onclick = () => change(-1);
-    $("#next").onclick = () => change(1);
     $("#finish").onclick = () => busy("#finish", finish);
-    loadPage();
+    documentScroll = $("#paper-document");
+    observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) queueLoad(entry.target);
+        });
+        releaseDistant();
+      },
+      { root: documentScroll, rootMargin: "1200px 0px" },
+    );
+    document
+      .querySelectorAll(".document-group[data-kind]")
+      .forEach((group) => observer.observe(group));
+    documentScroll.addEventListener("scroll", releaseDistant, {
+      passive: true,
+    });
+    queueLoad(document.querySelector('.source-group[data-page="1"]'));
   }
-  async function loadPage() {
-    if (state?.attempt?.phase !== "reading" || !canShowPaper()) return;
-    const g = ++gen;
-    req?.abort();
-    req = new AbortController();
-    translationReq?.abort();
-    translationReq = new AbortController();
-    const translationController = translationReq;
-    const translationEnabled =
-      state.translation && state.translation.status !== "disabled";
-    if (translationEnabled) {
-      const status = $("#translation-status");
-      if (status) {
-        status.textContent = "불러오는 중…";
-        status.classList.remove("hidden");
-      }
+  function queueLoad(group) {
+    if (
+      !group ||
+      group.dataset.loaded === "true" ||
+      group.dataset.queued === "true"
+    )
+      return;
+    group.dataset.queued = "true";
+    loadQueue.push(group);
+    pumpLoads();
+  }
+  function pumpLoads() {
+    while (activeLoads < 2 && loadQueue.length) {
+      const group = loadQueue.shift();
+      if (!group.isConnected || group.dataset.loaded === "true") continue;
+      const generation = gen;
+      activeLoads++;
+      void loadGroup(group).finally(() => {
+        if (generation !== gen) return;
+        activeLoads--;
+        pumpLoads();
+      });
     }
+  }
+  function validLoad(version) {
+    return (
+      version === gen &&
+      state?.attempt?.phase === "reading" &&
+      canShowPaper() &&
+      state.attempt.readingEndsAt > serverTime()
+    );
+  }
+  function bitmapKey(group) {
+    return `${group.dataset.kind}:${group.dataset.page}:${group.dataset.part || 1}`;
+  }
+  function draw(group, img, isSource) {
+    const canvas = document.createElement("canvas");
+    canvas.className = isSource ? "source-canvas" : "translation-canvas";
+    if (isSource && group.dataset.page === "1") canvas.id = "paper-canvas";
+    canvas.width = img.width;
+    canvas.height = img.height;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+    const sheet = document.createElement("div");
+    sheet.className = "document-sheet";
+    sheet.append(canvas);
+    group.append(sheet);
+    pageBitmaps.set(bitmapKey(group), img);
+    group.dataset.ratio = String(img.height / Math.max(1, img.width));
+  }
+  async function loadGroup(group) {
+    const version = gen;
+    const pageNumber = Number(group.dataset.page);
+    const isSource = group.dataset.kind === "source";
+    const controller = new AbortController();
+    requests.add(controller);
+    const images = [];
     try {
-      const originalResponse = await fetch(`/api/attempt/page/${page}`, {
-        signal: req.signal,
+      const part = Number(group.dataset.part) || 1;
+      if (!validLoad(version)) return;
+      const url = isSource
+        ? `/api/attempt/page/${pageNumber}`
+        : `/api/attempt/translation/${pageNumber}?part=${part}`;
+      const response = await fetch(url, {
+        signal: controller.signal,
         credentials: "same-origin",
       });
-      if (!originalResponse.ok)
+      if (!response.ok)
         throw Object.assign(new Error("페이지를 불러오지 못했습니다."), {
-          status: originalResponse.status,
+          status: response.status,
         });
-      const img = await createImageBitmap(await originalResponse.blob());
-      if (g !== gen || !canShowPaper()) {
+      if (!isSource && part === 1) {
+        const raw = response.headers.get("X-Page-Parts") || "";
+        if (!/^([1-9]|[12][0-9]|3[0-2])$/.test(raw))
+          throw Object.assign(
+            new Error("번역 페이지 수를 확인하지 못했습니다."),
+            { status: 502 },
+          );
+      }
+      const img = await createImageBitmap(await response.blob());
+      if (!validLoad(version)) {
         img.close();
         return;
       }
-      const a = state?.attempt;
-      if (g !== gen || !a || a.phase !== "reading" || !canShowPaper()) {
-        img.close();
-        return;
-      }
-      const left =
-        a.readingEndsAt - (state.serverNow + (performance.now() - sync));
-      if (left <= 0) {
-        img.close();
-        expire();
-        return;
-      }
-      clear();
-      bitmap = img;
-      const c = $("#paper-canvas");
-      if (!c) {
-        clear();
-        return;
-      }
-      c.width = img.width;
-      c.height = img.height;
-      c.style.width = `${img.width}px`;
-      c.getContext("2d").drawImage(img, 0, 0);
+      images.push(img);
+      draw(group, img, isSource);
+      if (!validLoad(version)) return;
+      group.querySelector(".page-placeholder")?.remove();
+      group.dataset.loaded = "true";
+      delete group.dataset.queued;
       applyZoom();
-      $("#paper-frame").classList.remove("concealed");
-      $("#focus-cover").hidden = true;
-      $("#loading").classList.add("hidden");
-      $("#count").textContent = `원문 ${page} / ${pages}`;
-      $("#prev").disabled = page <= 1;
-      $("#next").disabled = page >= pages;
-      if (translationEnabled)
-        void loadTranslations(g, page, translationController);
+      if (isSource && pageNumber === 1) {
+        $("#paper-frame")?.classList.remove("concealed");
+        const cover = $("#focus-cover");
+        if (cover) cover.hidden = true;
+      }
     } catch (e) {
-      if (e.name === "AbortError") return;
-      if (e.status === 401 || e.status === 410) {
-        clear();
-        await load();
-      } else msg(e.message);
+      if (e.name !== "AbortError" && validLoad(version)) {
+        if (e.status === 401 || e.status === 410) await load();
+        else {
+          group.querySelector(".page-placeholder").textContent =
+            "불러오지 못했습니다.";
+          msg(e.message);
+        }
+      }
     } finally {
-      if (g === gen) req = null;
+      requests.delete(controller);
+      if (group.dataset.loaded !== "true") {
+        images.forEach((img) => {
+          if (![...pageBitmaps.values()].includes(img)) img.close();
+        });
+        group
+          .querySelectorAll(".document-sheet")
+          .forEach((sheet) => sheet.remove());
+        delete group.dataset.queued;
+      }
     }
   }
-  async function loadTranslations(g, requestedPage, controller) {
-    const tr = state?.translation;
-    if (!tr || tr.status === "disabled" || tr.status !== "ready") return;
-    let total = 1;
-    const canvases = [],
-      images = [];
-    let committed = false;
-    try {
-      for (let part = 1; part <= total; part++) {
-        if (g !== gen || requestedPage !== page || !canShowPaper()) return;
-        const current = state?.attempt;
-        if (!current || current.readingEndsAt - serverTime() <= 0) {
-          expire();
-          return;
-        }
-        const r = await fetch(
-          `/api/attempt/translation/${requestedPage}?part=${part}`,
-          { signal: controller.signal, credentials: "same-origin" },
-        );
-        if (!r.ok)
-          throw Object.assign(new Error("번역을 불러오지 못했습니다."), {
-            status: r.status,
-          });
-        if (part === 1) {
-          const rawParts = r.headers.get("X-Page-Parts") || "";
-          const parsedParts = Number(rawParts);
-          if (
-            !/^([1-9]|[12][0-9]|3[0-2])$/.test(rawParts) ||
-            !Number.isInteger(parsedParts)
-          )
-            throw Object.assign(
-              new Error("번역 페이지 수를 확인하지 못했습니다."),
-              { status: 502 },
-            );
-          total = parsedParts;
-        }
-        const img = await createImageBitmap(await r.blob());
-        if (g !== gen || requestedPage !== page || !canShowPaper()) {
-          img.close();
-          return;
-        }
-        if (
-          !state?.attempt ||
-          state.attempt.readingEndsAt - serverTime() <= 0
-        ) {
-          img.close();
-          expire();
-          return;
-        }
-        const c = document.createElement("canvas");
-        c.className = "translation-canvas";
-        c.width = img.width;
-        c.height = img.height;
-        c.style.width = `${img.width}px`;
-        c.getContext("2d").drawImage(img, 0, 0);
-        canvases.push(c);
-        images.push(img);
-      }
-      const host = $("#translation-pages");
-      if (!host || g !== gen || requestedPage !== page || !canShowPaper())
-        return;
-      host.replaceChildren(...canvases);
-      applyZoom();
-      translationBitmaps = images;
-      committed = true;
-      host.scrollTop = 0;
-      const meta = $("#translation-meta");
-      if (meta) meta.textContent = `· ${total}쪽`;
-      $("#translation-status")?.classList.add("hidden");
-    } catch (e) {
-      canvases.forEach((c) => {
-        c.width = 0;
-        c.height = 0;
-        c.remove();
+  function releaseDistant() {
+    if (!documentScroll) return;
+    const root = documentScroll.getBoundingClientRect();
+    document
+      .querySelectorAll('.document-group[data-kind][data-loaded="true"]')
+      .forEach((group) => {
+        const rect = group.getBoundingClientRect();
+        if (rect.bottom < root.top - 1800 || rect.top > root.bottom + 1800)
+          unloadGroup(group);
       });
-      if (e.name === "AbortError") return;
-      if (e.status === 401 || e.status === 410) {
-        clear();
-        await load();
-        return;
+  }
+  function unloadGroup(group) {
+    group.querySelectorAll("canvas").forEach((canvas) => {
+      canvas.width = 0;
+      canvas.height = 0;
+    });
+    group
+      .querySelectorAll(".document-sheet")
+      .forEach((sheet) => sheet.remove());
+    {
+      const key = bitmapKey(group);
+      const img = pageBitmaps.get(key);
+      if (img) {
+        img.close();
+        pageBitmaps.delete(key);
       }
-      const status = $("#translation-status");
-      if (status && g === gen) {
-        status.textContent =
-          e.status === 409 || e.status === 503
-            ? "번역을 준비하지 못했습니다."
-            : "번역을 불러오지 못했습니다.";
-        status.classList.remove("hidden");
-        const retry = document.createElement("button");
-        retry.className = "btn secondary translation-retry";
-        retry.textContent = "다시 시도";
-        retry.onclick = () => loadPage();
-        status.append(" ", retry);
-      }
-    } finally {
-      if (!committed) {
-        images.forEach((image) => image.close());
-        canvases.forEach((c) => {
-          c.width = 0;
-          c.height = 0;
-          c.remove();
-        });
-      }
-      if (g === gen && translationReq === controller) translationReq = null;
     }
+    group.insertAdjacentHTML(
+      "afterbegin",
+      `<div class="page-placeholder">${group.dataset.kind === "source" ? "원문" : "한국어"} ${group.dataset.page}</div>`,
+    );
+    delete group.dataset.loaded;
   }
   function applyZoom() {
-    for (const host of document.querySelectorAll(
-      "#paper-surface,#translation-pages",
-    )) {
-      const style = getComputedStyle(host);
-      const width =
-        host.clientWidth -
-        parseFloat(style.paddingLeft) -
-        parseFloat(style.paddingRight);
-      for (const canvas of host.querySelectorAll("canvas"))
+    const contentWidth = Math.max(
+      1,
+      (documentScroll?.clientWidth || 1068) - 28,
+    );
+    const pairedWidth = Math.max(520, Math.floor((contentWidth - 14) / 2));
+    document.querySelectorAll(".document-pair").forEach((pair) => {
+      const width = Math.round(pairedWidth * zoom);
+      pair.style.gridTemplateColumns = `${width}px ${width}px`;
+    });
+    const single = $(".single-document");
+    if (single)
+      single.style.gridTemplateColumns = `${Math.max(520, Math.round(contentWidth * zoom))}px`;
+    document.querySelectorAll(".document-group[data-kind]").forEach((group) => {
+      const width = group.clientWidth;
+      const ratio = Number(group.dataset.ratio) || 1.42;
+      group.style.minHeight = `${Math.max(360, Math.floor(width * ratio))}px`;
+      group.querySelectorAll("canvas").forEach((canvas) => {
         if (canvas.width > 0)
-          canvas.style.width = `${Math.max(1, Math.floor(width * zoom))}px`;
-    }
+          canvas.style.width = `${Math.max(1, Math.floor(width))}px`;
+      });
+    });
     if ($("#zoom-level"))
       $("#zoom-level").textContent = `${Math.round(zoom * 100)}%`;
     if ($("#zoom-out")) $("#zoom-out").disabled = zoom <= 1;
     if ($("#zoom-in")) $("#zoom-in").disabled = zoom >= 2.5;
   }
   window.addEventListener("resize", applyZoom);
-  function change(d) {
-    page = Math.max(1, Math.min(pages, page + d));
-    stop();
-    $("#paper-frame")?.classList.add("concealed");
-    $("#translation-status")?.classList.remove("hidden");
-    $("#translation-pages")?.replaceChildren();
-    if ($("#translation-meta")) $("#translation-meta").textContent = "";
-    if ($("#translation-pages")) $("#translation-pages").scrollTop = 0;
-    if ($("#paper-surface")) $("#paper-surface").scrollTop = 0;
-    $("#loading")?.classList.remove("hidden");
-    $("#prev")?.toggleAttribute("disabled", page <= 1);
-    $("#next")?.toggleAttribute("disabled", page >= pages);
-    loadPage();
-  }
   async function finish() {
     try {
       const d = await api("/api/attempt/finish", {
@@ -588,8 +578,7 @@
   }
   function expire() {
     if (state?.attempt?.phase !== "reading") return;
-    clear();
-    req?.abort();
+    stop();
     state.attempt = { ...state.attempt, phase: "writing" };
     mode = "";
     render();
@@ -606,13 +595,6 @@
       sync = performance.now();
       if (hasReaderFocus()) verifiedFocusVersion = version;
       render();
-      if (
-        state.attempt?.phase === "reading" &&
-        canShowPaper() &&
-        !bitmap &&
-        !req
-      )
-        void loadPage();
     } catch (e) {
       if (!state)
         reader.innerHTML =

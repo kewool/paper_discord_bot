@@ -56,7 +56,10 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
       page.locator("#paper-canvas").evaluate((c: HTMLCanvasElement) => c.width),
     )
     .toBeGreaterThan(0);
-  await expect(page.locator(".translation-canvas")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /이전|다음/ })).toHaveCount(0);
+  await expect
+    .poll(() => page.locator(".translation-canvas").count())
+    .toBeGreaterThan(0);
   await expect
     .poll(() =>
       page
@@ -67,46 +70,79 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
     .toBeGreaterThan(0);
   const initialTimer = await page.locator("#timer").innerText();
   await expect(page.locator("#timer")).not.toHaveText(initialTimer);
-  let extraTranslationSheet: Buffer;
-  await page.route(/\/api\/attempt\/translation\/2\?part=1$/, async (route) => {
-    const response = await route.fetch();
-    extraTranslationSheet = await response.body();
-    await route.fulfill({
-      response,
-      headers: { ...response.headers(), "x-page-parts": "2" },
-    });
+  await page.locator("#paper-document").evaluate((node) => {
+    node
+      .querySelector<HTMLElement>('.source-group[data-page="2"]')
+      ?.scrollIntoView();
   });
-  await page.route(/\/api\/attempt\/translation\/2\?part=2$/, (route) =>
-    route.fulfill({
-      contentType: "image/png",
-      headers: { "X-Page-Parts": "2" },
-      body: extraTranslationSheet,
-    }),
+  await expect(
+    page.locator('.source-group[data-page="2"] .source-canvas'),
+  ).toHaveCount(1);
+  const pageTwoSheets = page.locator('.translation-sheet[data-page="2"]');
+  await expect(pageTwoSheets).toHaveCount(3);
+  await pageTwoSheets.last().scrollIntoViewIfNeeded();
+  await expect(pageTwoSheets.last().locator(".translation-canvas")).toHaveCount(
+    1,
   );
-  await page.getByRole("button", { name: "다음 →" }).click();
-  await expect(page.locator("#count")).toHaveText("원문 2 / 3");
-  await expect(page.locator(".translation-canvas")).toHaveCount(2);
-  await expect(page.locator("#translation-meta")).toHaveText("· 2쪽");
+  expect(
+    await page.locator("#paper-document").evaluate((document) => {
+      const root = document.getBoundingClientRect();
+      const source = document
+        .querySelector('.source-group[data-page="2"] .source-canvas')
+        ?.getBoundingClientRect();
+      return !!source && source.top < root.top + 30 && source.bottom > root.top;
+    }),
+  ).toBe(true);
+  await page.locator("#paper-document").evaluate((node) => {
+    node
+      .querySelector<HTMLElement>('.source-group[data-page="3"]')
+      ?.scrollIntoView();
+  });
+  await expect(
+    page.locator('.source-group[data-page="3"] .source-canvas'),
+  ).toHaveCount(1);
+  await expect(
+    page.locator('.translation-sheet[data-page="3"] .translation-canvas'),
+  ).toHaveCount(1);
   await expect
     .poll(() =>
       page
-        .locator(".translation-canvas")
+        .locator('.translation-sheet[data-page="3"] .translation-canvas')
         .first()
         .evaluate((c: HTMLCanvasElement) => c.width),
     )
     .toBeGreaterThan(0);
+  await page.locator("#paper-document").evaluate((node) => {
+    node
+      .querySelector<HTMLElement>(
+        '.translation-sheet[data-page="2"]:last-child',
+      )
+      ?.scrollIntoView();
+  });
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({ path: "work/browser-reading.png", fullPage: true });
+  await page.locator("#paper-document").evaluate((node) => {
+    node
+      .querySelector<HTMLElement>('.source-group[data-page="1"]')
+      ?.scrollIntoView();
+  });
+  await expect(page.locator("#paper-canvas")).toHaveCount(1);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "페이지 확대", exact: true }).click();
   await page.getByRole("button", { name: "페이지 확대", exact: true }).click();
   await expect(page.locator("#zoom-level")).toHaveText("150%");
   expect(
-    await page
-      .locator("#paper-canvas")
-      .evaluate(
-        (c) => c.getBoundingClientRect().width > c.parentElement!.clientWidth,
-      ),
+    await page.locator("#paper-document").evaluate((document) => {
+      const [original, translation] = document.querySelectorAll<HTMLElement>(
+        ".document-pair:first-child > .document-side",
+      );
+      const originalBox = original.getBoundingClientRect();
+      const translationBox = translation.getBoundingClientRect();
+      return (
+        originalBox.right <= translationBox.left &&
+        document.scrollWidth > document.clientWidth
+      );
+    }),
   ).toBe(true);
   await page.screenshot({
     path: "work/browser-bilingual-mobile.png",

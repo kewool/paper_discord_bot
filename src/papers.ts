@@ -5,7 +5,7 @@ import { readFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PaperInput } from "./types.js";
-import { TRANSLATION_VERSION } from "./translation-types.js";
+import { TRANSLATION_VERSION, TRANSLATION_VERSIONS } from "./translation-types.js";
 import { KOREAN_FONT } from "./fonts.js";
 
 const MAX_PDF_BYTES = 40 * 1024 * 1024;
@@ -204,7 +204,7 @@ export async function renderPage(
       !Number.isInteger(translation.part) ||
       translation.part < 1 ||
       translation.part > 32 ||
-      !["ko-v1", TRANSLATION_VERSION].includes(
+      !TRANSLATION_VERSIONS.includes(
         translation.version ?? TRANSLATION_VERSION,
       ))
   )

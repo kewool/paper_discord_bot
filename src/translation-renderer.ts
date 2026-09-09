@@ -37,6 +37,14 @@ type SourceRegion = { x: number; y: number; width: number; height: number };
 type FigureBlock = TranslationBlock & {
   sourceRegion?: SourceRegion | null;
 };
+export type TranslationRenderMeta = {
+  title: string;
+  page: number;
+  pageCount: number;
+  /** Missing only for pre-v3 cached translations. */
+  layout?: { columns: 1 | 2 };
+};
+type SpannedBlock = TranslationBlock & { span?: "column" | "full" };
 
 let mathDocument: ReturnType<typeof mathjax.document> | undefined;
 let mathAdaptor: ReturnType<typeof liteAdaptor> | undefined;
@@ -266,7 +274,7 @@ function drawLine(
 
 function validate(
   blocks: readonly TranslationBlock[],
-  meta: { title: string; page: number; pageCount: number },
+  meta: TranslationRenderMeta,
 ) {
   cleanText(meta.title, "논문 제목", 2_000);
   if (
@@ -277,10 +285,18 @@ function validate(
     meta.pageCount > 40
   )
     throw new Error("페이지 정보가 올바르지 않습니다.");
+  if (
+    meta.layout !== undefined &&
+    (!meta.layout || (meta.layout.columns !== 1 && meta.layout.columns !== 2))
+  )
+    throw new Error("페이지 열 정보가 올바르지 않습니다.");
   if (!Array.isArray(blocks) || !blocks.length || blocks.length > MAX_BLOCKS)
     throw new Error("번역 블록 수가 허용 범위를 벗어났습니다.");
   let total = 0;
   for (const block of blocks) {
+    const span = (block as SpannedBlock).span;
+    if (span !== undefined && span !== "column" && span !== "full")
+      throw new Error("번역 블록 폭 정보가 올바르지 않습니다.");
     if (
       !block ||
       ![
@@ -338,7 +354,7 @@ function validate(
 /** Renders one translated source page into one or more self-contained PNG sheets. */
 export async function renderTranslationPages(
   blocks: readonly TranslationBlock[],
-  meta: { title: string; page: number; pageCount: number },
+  meta: TranslationRenderMeta,
   sourcePageImage?: Buffer,
 ): Promise<Buffer[]> {
   validate(blocks, meta);
@@ -362,13 +378,26 @@ export async function renderTranslationPages(
       throw new Error("원문 페이지 이미지가 허용 범위를 벗어났습니다.");
   }
   const sheetCanvases: Canvas[] = [];
+  const layout = meta.layout?.columns ?? 1;
+  const gutter = 34;
+  const fullWidth = WIDTH - MARGIN * 2;
+  const columnWidth = layout === 2 ? (fullWidth - gutter) / 2 : fullWidth;
+  const columnX = (index: number) => MARGIN + index * (columnWidth + gutter);
   let canvas = createCanvas(WIDTH, HEIGHT);
   let ctx = canvas.getContext("2d");
   let y = HEADER;
+  let column = 0;
+  let columnYs = [HEADER, HEADER];
+  // A full-width block starts a new two-column band below itself.  The right
+  // column must begin at that band top, never back at the page header.
+  let columnBandTop = HEADER;
   const startSheet = () => {
     canvas = createCanvas(WIDTH, HEIGHT);
     ctx = canvas.getContext("2d");
     y = HEADER;
+    column = 0;
+    columnYs = [HEADER, HEADER];
+    columnBandTop = HEADER;
     ctx.fillStyle = "#fffefd";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
     ctx.fillStyle = "#273447";
@@ -396,18 +425,46 @@ export async function renderTranslationPages(
     finishSheet();
     startSheet();
   };
-  startSheet();
-  const ensure = (height: number) => {
-    if (y + height > BODY_BOTTOM && y > HEADER) next();
+  const nextColumn = () => {
+    if (layout === 2 && column === 0) {
+      columnYs[0] = y;
+      column = 1;
+      y = columnBandTop;
+      return;
+    }
+    if (layout === 2) columnYs[1] = y;
+    next();
   };
+  const useFullWidth = () => {
+    if (layout === 2) {
+      columnYs[column] = y;
+      y = Math.max(...columnYs);
+      column = 0;
+    }
+  };
+  const syncFullWidth = () => {
+    if (layout === 2) {
+      columnYs = [y, y];
+      columnBandTop = y;
+    }
+  };
+  startSheet();
 
   for (const block of blocks) {
+    const span = (block as SpannedBlock).span ?? "column";
+    const full = layout === 1 || span === "full";
+    if (full) useFullWidth();
+    const blockWidth = full ? fullWidth : columnWidth;
+    const activeX = () => (full ? MARGIN : columnX(column));
+    const ensure = (height: number) => {
+      if (y + height <= BODY_BOTTOM || y === HEADER) return;
+      if (full) next();
+      else nextColumn();
+    };
     const text = boundedText(block.text, "번역 블록", 12_000);
     if ((block as { kind: string }).kind === "figure") {
       const region = (block as FigureBlock).sourceRegion!;
-      const caption = text
-        ? await makeLines(ctx, text, 21, WIDTH - MARGIN * 2)
-        : [];
+      const caption = text ? await makeLines(ctx, text, 21, blockWidth) : [];
       const captionHeight =
         caption.reduce((sum, line) => sum + line.height, 0) +
         (caption.length ? 18 : 0);
@@ -428,7 +485,7 @@ export async function renderTranslationPages(
         Math.max(1, Math.ceil(region.height * sourceImage!.height)),
       );
       const scale = Math.min(
-        (WIDTH - MARGIN * 2) / sourceWidth,
+        blockWidth / sourceWidth,
         (bodyHeight - reservedCaption) / sourceHeight,
       );
       const renderedWidth = Math.max(1, Math.floor(sourceWidth * scale));
@@ -440,7 +497,7 @@ export async function renderTranslationPages(
         sourceY,
         sourceWidth,
         sourceHeight,
-        (WIDTH - renderedWidth) / 2,
+        activeX() + (blockWidth - renderedWidth) / 2,
         y,
         renderedWidth,
         renderedHeight,
@@ -450,45 +507,49 @@ export async function renderTranslationPages(
         y += 6;
         for (const line of caption) {
           ensure(line.height);
-          drawLine(ctx, line, MARGIN, y, 21, "#596775");
+          drawLine(ctx, line, activeX(), y, 21, "#596775");
           y += line.height;
         }
         y += 12;
       }
+      if (full) syncFullWidth();
+      else columnYs[column] = y;
       continue;
     }
     if (block.kind === "equation") {
-      const run = await mathRun(text, 30, true, WIDTH - MARGIN * 2);
+      const run = await mathRun(text, 30, true, blockWidth);
       if (run.fallback) {
         const lines = await makeLines(
           ctx,
           `[수식 렌더링 불가: ${text}]`,
           21,
-          WIDTH - MARGIN * 2,
+          blockWidth,
         );
         for (const line of lines) {
           ensure(line.height);
-          drawLine(ctx, line, MARGIN, y, 21);
+          drawLine(ctx, line, activeX(), y, 21);
           y += line.height;
         }
       } else {
-        if (run.width > WIDTH - MARGIN * 2 || run.height > BODY_BOTTOM - HEADER)
+        if (run.width > blockWidth || run.height > BODY_BOTTOM - HEADER)
           throw new Error("수식이 한 장에 담기에는 너무 큽니다.");
         ensure(run.height + 22);
         ctx.drawImage(
           run.image!,
-          (WIDTH - run.width) / 2,
+          activeX() + (blockWidth - run.width) / 2,
           y,
           run.width,
           run.height,
         );
         y += run.height + 22;
       }
+      if (full) syncFullWidth();
+      else columnYs[column] = y;
       continue;
     }
     if (block.kind === "table") {
       const columns = Math.max(...block.rows.map((row) => row.length));
-      const tableWidth = WIDTH - MARGIN * 2;
+      const tableWidth = blockWidth;
       const cellWidth = tableWidth / columns;
       const drawRow = async (
         row: string[],
@@ -512,7 +573,8 @@ export async function renderTranslationPages(
           )
         ) {
           if (y + 38 > BODY_BOTTOM) {
-            next();
+            if (full) next();
+            else nextColumn();
             if (!header && repeatHeader)
               await drawRow(block.rows[0], true, false);
           }
@@ -540,7 +602,7 @@ export async function renderTranslationPages(
               ),
             ) + 18;
           for (let column = 0; column < columns; column += 1) {
-            const x = MARGIN + column * cellWidth;
+            const x = activeX() + column * cellWidth;
             ctx.fillStyle = header ? "#e8eef5" : "#ffffff";
             ctx.fillRect(x, y, cellWidth, height);
             ctx.strokeStyle = "#9eabb8";
@@ -559,19 +621,22 @@ export async function renderTranslationPages(
         const label = await makeLines(ctx, text, 21, tableWidth);
         for (const line of label) {
           ensure(line.height);
-          drawLine(ctx, line, MARGIN, y, 21, "#4c5967");
+          drawLine(ctx, line, activeX(), y, 21, "#4c5967");
           y += line.height;
         }
         y += 6;
       }
       for (let i = 0; i < block.rows.length; i += 1) {
         if (i > 0 && y + 54 > BODY_BOTTOM) {
-          next();
+          if (full) next();
+          else nextColumn();
           await drawRow(block.rows[0], true, false);
         }
         await drawRow(block.rows[i], i === 0);
       }
       y += 18;
+      if (full) syncFullWidth();
+      else columnYs[column] = y;
       continue;
     }
     const style =
@@ -588,15 +653,17 @@ export async function renderTranslationPages(
                 before: 4,
                 after: 14,
               };
-    const lines = await makeLines(ctx, text, style.size, WIDTH - MARGIN * 2);
+    const lines = await makeLines(ctx, text, style.size, blockWidth);
     if (style.before) ensure(style.before);
     y += style.before;
     for (const line of lines) {
       ensure(line.height);
-      drawLine(ctx, line, MARGIN, y, style.size, style.color, style.weight);
+      drawLine(ctx, line, activeX(), y, style.size, style.color, style.weight);
       y += line.height;
     }
     y += style.after;
+    if (full) syncFullWidth();
+    else columnYs[column] = y;
   }
   finishSheet();
   return sheetCanvases.map((sheet, index) => {

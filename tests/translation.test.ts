@@ -19,6 +19,7 @@ import {
   validatePaperTranslation,
   applyTranslationReview,
   rerenderTranslations,
+  applyPaperLayout,
 } from "../src/translation.js";
 import type { TranslationPage } from "../src/translation-types.js";
 
@@ -52,19 +53,49 @@ test("translation resumes saved pages, waits before timing, and serves only prot
     const translated = (page: number): TranslationPage => ({
       page,
       complete: true,
+      layout: { columns: 1 },
       glossary: [],
       blocks: [
-        { kind: "heading", text: `한국어 검증 페이지 ${page}`, rows: [] },
+        {
+          kind: "heading",
+          text: `한국어 검증 페이지 ${page}`,
+          rows: [],
+          span: "full",
+        },
         {
           kind: "paragraph",
           text: "가상의 참가자와 결과를 사용한 예시이며 실제 연구 결과로 인용할 수 없습니다. 관찰은 인과관계나 일반화 가능성을 입증하지 않으며 연구의 방법과 한계를 구분해야 합니다. ".repeat(
             page === 2 ? 24 : 2,
           ),
           rows: [],
+          span: "column",
         },
       ],
     });
     const first = claimTranslation(store, config)!;
+    const layout = {
+      pages: [1, 2, 3].map((page) => ({
+        page,
+        layout: { columns: page === 2 ? 2 : 1 },
+        spans: ["full", "column"],
+      })),
+    };
+    const annotated = applyPaperLayout(
+      layout,
+      [1, 2, 3].map(translated),
+      paper,
+    );
+    assert.equal(annotated[1].layout.columns, 2);
+    assert.equal(annotated[1].blocks[1].text, translated(2).blocks[1].text);
+    assert.throws(
+      () =>
+        applyPaperLayout(
+          { pages: layout.pages.slice(1) },
+          [1, 2, 3].map(translated),
+          paper,
+        ),
+      /전체/,
+    );
     const wholePaper = validatePaperTranslation(
       {
         complete: true,

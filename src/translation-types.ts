@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-export const TRANSLATION_VERSION = "ko-v2";
+export const TRANSLATION_VERSION = "ko-v3";
+export const TRANSLATION_VERSIONS = ["ko-v1", "ko-v2", TRANSLATION_VERSION];
+export const TRANSLATION_RENDER_VERSION = 3;
+export const pageLayoutSchema = z
+  .object({
+    columns: z.union([z.literal(1), z.literal(2)]),
+  })
+  .strict();
 export const sourceRegionSchema = z
   .object({
     x: z.number().min(0).max(1),
@@ -23,6 +30,7 @@ export const translationBlockSchema = z
     text: z.string().max(12000),
     rows: z.array(z.array(z.string().max(1200)).min(1).max(12)).max(100),
     sourceRegion: sourceRegionSchema.nullable().optional(),
+    span: z.enum(["column", "full"]).optional(),
   })
   .strict();
 export type TranslationBlock = z.infer<typeof translationBlockSchema>;
@@ -31,6 +39,7 @@ export const translationPageSchema = z
   .object({
     page: z.number().int().min(1).max(40),
     complete: z.boolean(),
+    layout: pageLayoutSchema.optional(),
     blocks: z.array(translationBlockSchema).min(1).max(180),
     glossary: z
       .array(
@@ -48,10 +57,12 @@ export type TranslationPage = z.infer<typeof translationPageSchema>;
 
 // New model responses include every key; older stored pages may omit sourceRegion.
 const outputPageSchema = translationPageSchema.extend({
+  layout: pageLayoutSchema,
   blocks: z
     .array(
       translationBlockSchema.extend({
         sourceRegion: sourceRegionSchema.nullable(),
+        span: z.enum(["column", "full"]),
       }),
     )
     .min(1)
@@ -74,6 +85,7 @@ export interface TranslationState {
   status: "disabled" | "pending" | "translating" | "ready" | "failed";
   readyPages: number;
   totalPages: number;
+  parts?: number[];
 }
 export interface PaperTranslation {
   paperId: string;

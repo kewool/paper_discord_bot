@@ -51,11 +51,13 @@ export async function seedDemoTranslation(store: Store) {
     await saveTranslationPage(store, { ...row, leaseOwner }, paper, {
       page: index + 1,
       complete: true,
+      layout: { columns: 1 },
       glossary: [],
       blocks: pages[index].map((text, i) => ({
         kind: i === 0 ? "heading" : "paragraph",
         text,
         rows: [],
+        span: i === 0 ? "full" : "column",
       })),
     });
   }

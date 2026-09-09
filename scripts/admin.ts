@@ -66,7 +66,7 @@ try {
     );
   } else if (command === "rerender-translations" && args.length === 0) {
     console.log(
-      `번역 이미지 ${await rerenderTranslations(store)}쪽의 글꼴을 갱신했습니다.`,
+      `번역 이미지 ${await rerenderTranslations(store, 1000, config)}쪽의 원문 배치와 글꼴을 갱신했습니다.`,
     );
   } else if (command === "retranslate" && id) {
     if (args.length > 2 || (args[1] && args[1] !== "--yes"))
