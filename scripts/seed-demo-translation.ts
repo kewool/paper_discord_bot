@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Store } from "../src/store.js";
 import { saveTranslationPage } from "../src/translation.js";
-import {
-  TRANSLATION_VERSION,
-  type PaperTranslation,
-} from "../src/translation-types.js";
+import type { PaperTranslation } from "../src/translation-types.js";
 
 const pages = [
   [
@@ -32,7 +29,7 @@ export async function seedDemoTranslation(store: Store) {
     "INSERT OR IGNORE INTO paperTranslations(paperId,model,version,updatedAt) VALUES(?,?,?,?)",
     paper.id,
     "demo-fixture",
-    TRANSLATION_VERSION,
+    "ko-v3",
     Date.now(),
   );
   for (;;) {

@@ -384,6 +384,12 @@ h2 {
   position: sticky;
   top: 0;
 }
+.document-flow {
+  align-items: start;
+}
+.document-flow .source-group {
+  position: static;
+}
 .source-canvas,
 .translation-canvas {
   display: block;

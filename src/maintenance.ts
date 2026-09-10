@@ -41,7 +41,7 @@ export function resetPapers(store: Store, dataDir: string, apply = false) {
     resolve(database.file) !== resolve(root, "league.sqlite")
   )
     throw new Error("논문 DB와 DATA_DIR 경로가 일치하지 않습니다.");
-  const directories = ["papers", "import-work"].map((name) =>
+  const directories = ["papers", "import-work", "pdf-translator"].map((name) =>
     resolve(root, name),
   );
   const counts = store.transaction(() => {

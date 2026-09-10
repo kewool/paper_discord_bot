@@ -60,6 +60,16 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
   await expect
     .poll(() => page.locator(".translation-canvas").count())
     .toBeGreaterThan(0);
+  await expect(page.locator(".document-flow")).toHaveCount(1);
+  await expect(page.locator(".document-flow .source-group")).toHaveCount(3);
+  await expect(page.locator(".document-flow .translation-sheet")).toHaveCount(
+    4,
+  );
+  expect(
+    await page.evaluate(
+      async () => (await fetch("/api/attempt/translation/4?part=1")).status,
+    ),
+  ).toBe(200);
   await expect
     .poll(() =>
       page
@@ -78,21 +88,9 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
   await expect(
     page.locator('.source-group[data-page="2"] .source-canvas'),
   ).toHaveCount(1);
-  const pageTwoSheets = page.locator('.translation-sheet[data-page="2"]');
-  await expect(pageTwoSheets).toHaveCount(3);
-  await pageTwoSheets.last().scrollIntoViewIfNeeded();
-  await expect(pageTwoSheets.last().locator(".translation-canvas")).toHaveCount(
-    1,
-  );
-  expect(
-    await page.locator("#paper-document").evaluate((document) => {
-      const root = document.getBoundingClientRect();
-      const source = document
-        .querySelector('.source-group[data-page="2"] .source-canvas')
-        ?.getBoundingClientRect();
-      return !!source && source.top < root.top + 30 && source.bottom > root.top;
-    }),
-  ).toBe(true);
+  const fourthTranslation = page.locator('.translation-sheet[data-page="4"]');
+  await fourthTranslation.scrollIntoViewIfNeeded();
+  await expect(fourthTranslation.locator(".translation-canvas")).toHaveCount(1);
   await page.locator("#paper-document").evaluate((node) => {
     node
       .querySelector<HTMLElement>('.source-group[data-page="3"]')
@@ -114,9 +112,7 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
     .toBeGreaterThan(0);
   await page.locator("#paper-document").evaluate((node) => {
     node
-      .querySelector<HTMLElement>(
-        '.translation-sheet[data-page="2"]:last-child',
-      )
+      .querySelector<HTMLElement>('.translation-sheet[data-page="4"]')
       ?.scrollIntoView();
   });
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
@@ -222,7 +218,7 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
   expect(expiredStatus).toBe(410);
   expect(
     await page.evaluate(
-      async () => (await fetch("/api/attempt/translation/1?part=1")).status,
+      async () => (await fetch("/api/attempt/translation/4?part=1")).status,
     ),
   ).toBe(410);
   await page.reload();

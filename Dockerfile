@@ -13,7 +13,10 @@ RUN npm run build && npm prune --omit=dev
 
 FROM ${NODE_IMAGE} AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libfontconfig1 fonts-dejavu-core fonts-noto-cjk \
+    && apt-get install -y --no-install-recommends ca-certificates libfontconfig1 fonts-dejavu-core fonts-noto-cjk python3 python3-venv python3-reportlab poppler-utils \
+    && python3 -m venv --system-site-packages /opt/pdf \
+    && /opt/pdf/bin/pip install --no-cache-dir PyMuPDF==1.26.5 \
+    && printf '%s\n' 'export PATH="/opt/pdf/bin:$PATH"' > /etc/profile.d/pdf-tools.sh \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -21,7 +24,7 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/app/data \
     CODEX_HOME=/home/node/.codex \
-    PATH=/app/node_modules/.bin:${PATH}
+    PATH=/opt/pdf/bin:/app/node_modules/.bin:${PATH}
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist/src ./dist/src

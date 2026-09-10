@@ -90,7 +90,8 @@ export async function importPaper(
   if (sourceStat.size <= 0 || sourceStat.size > MAX_PDF_BYTES)
     throw new Error("PDF는 40MB 이하만 가져올 수 있습니다.");
 
-  const bytes = new Uint8Array(await readFile(source));
+  const sourceBytes = await readFile(source);
+  const bytes = new Uint8Array(sourceBytes);
   const standardFontDataUrl = `${join(pdfjsRoot, "standard_fonts")}/`;
   const loadingTask = pdfjs.getDocument({
     data: bytes,
@@ -149,6 +150,7 @@ export async function importPaper(
     await mkdir(papersRoot, { recursive: true });
     await mkdir(directory, { recursive: false });
     createdDirectory = directory;
+    await writeFile(join(directory, "source.pdf"), sourceBytes, { flag: "wx" });
 
     for (let index = 0; index < pages.length; index += 1) {
       const base = pages[index].page.getViewport({ scale: 1 });
@@ -199,7 +201,8 @@ export async function renderPage(
   watermark: string,
   translation?: { artifactId: string; part: number; version?: string },
 ): Promise<Buffer> {
-  if (!Number.isInteger(page) || page < 1 || page > paper.pageCount)
+  const maxPage = translation?.version === "ko-v4" ? 120 : paper.pageCount;
+  if (!Number.isInteger(page) || page < 1 || page > maxPage)
     throw new Error("요청한 페이지 번호가 올바르지 않습니다.");
   if (!watermark.trim() || watermark.length > 1_000)
     throw new Error("워터마크 정보가 올바르지 않습니다.");

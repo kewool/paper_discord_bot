@@ -1,7 +1,12 @@
 import { z } from "zod";
 
-export const TRANSLATION_VERSION = "ko-v3";
-export const TRANSLATION_VERSIONS = ["ko-v1", "ko-v2", TRANSLATION_VERSION];
+export const TRANSLATION_VERSION = "ko-v4";
+export const TRANSLATION_VERSIONS = [
+  "ko-v1",
+  "ko-v2",
+  "ko-v3",
+  TRANSLATION_VERSION,
+];
 export const TRANSLATION_RENDER_VERSION = 3;
 export const pageLayoutSchema = z
   .object({
@@ -86,6 +91,7 @@ export interface TranslationState {
   readyPages: number;
   totalPages: number;
   parts?: number[];
+  documentPages?: number;
 }
 export interface PaperTranslation {
   paperId: string;

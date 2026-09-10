@@ -223,7 +223,7 @@
     if (d) d.classList.toggle("hidden", !state?.demo);
     const a = state?.attempt,
       tr = state?.translation,
-      k = `${state?.authenticated}-${!!token}-${state?.round?.id || "none"}-${a?.id || "none"}-${a?.phase || "none"}-${recordedEnd(a?.id) !== null}-${confirmedEnds.has(a?.id)}-${tr?.status || "none"}-${tr?.readyPages || 0}-${tr?.totalPages || 0}`;
+      k = `${state?.authenticated}-${!!token}-${state?.round?.id || "none"}-${a?.id || "none"}-${a?.phase || "none"}-${recordedEnd(a?.id) !== null}-${confirmedEnds.has(a?.id)}-${tr?.status || "none"}-${tr?.readyPages || 0}-${tr?.totalPages || 0}-${tr?.documentPages || 0}`;
     if (k !== mode) {
       mode = k;
       stop();
@@ -311,24 +311,30 @@
     const translated =
       state.translation && state.translation.status !== "disabled";
     pages = Number(a.pageCount) || 1;
+    const documentPages = Math.max(
+      0,
+      Math.min(120, Number(state.translation?.documentPages) || 0),
+    );
     const translationParts = Array.isArray(state.translation?.parts)
       ? state.translation.parts
       : [];
-    const documentGroups = Array.from({ length: pages }, (_, index) => {
-      const number = index + 1;
-      const source = `<div class="document-group source-group" data-kind="source" data-page="${number}"><div class="page-placeholder">원문 ${number}</div></div>`;
-      if (!translated) return source;
-      const partCount = Math.max(
-        1,
-        Math.min(32, Number(translationParts[index]) || 1),
-      );
-      const sheets = Array.from(
-        { length: partCount },
-        (_, part) =>
-          `<div class="document-group translation-sheet" data-kind="translation" data-page="${number}" data-part="${part + 1}"><div class="page-placeholder">한국어 ${number}-${part + 1}</div></div>`,
-      ).join("");
-      return `<section class="document-pair"><div class="document-side"><h3>원문 ${number}</h3>${source}</div><div class="document-side translation-side"><h3>한국어 ${number}</h3><div class="translation-stack">${sheets}</div></div></section>`;
-    }).join("");
+    const documentGroups = documentPages
+      ? documentFlow(pages, documentPages)
+      : Array.from({ length: pages }, (_, index) => {
+          const number = index + 1;
+          const source = `<div class="document-group source-group" data-kind="source" data-page="${number}"><div class="page-placeholder">원문 ${number}</div></div>`;
+          if (!translated) return source;
+          const partCount = Math.max(
+            1,
+            Math.min(32, Number(translationParts[index]) || 1),
+          );
+          const sheets = Array.from(
+            { length: partCount },
+            (_, part) =>
+              `<div class="document-group translation-sheet" data-kind="translation" data-page="${number}" data-part="${part + 1}"><div class="page-placeholder">한국어 ${number}-${part + 1}</div></div>`,
+          ).join("");
+          return `<section class="document-pair"><div class="document-side"><h3>원문 ${number}</h3>${source}</div><div class="document-side translation-side"><h3>한국어 ${number}</h3><div class="translation-stack">${sheets}</div></div></section>`;
+        }).join("");
     reader.innerHTML = `<div class="reader-shell"><div class="reading-bar"><h2>${esc(a.paperTitle)}</h2><div class="reader-actions"><strong id="timer" class="timer" aria-label="남은 열람 시간"></strong><div class="reader-zoom"><button id="zoom-out" class="btn secondary" aria-label="페이지 축소">−</button><span id="zoom-level"></span><button id="zoom-in" class="btn secondary" aria-label="페이지 확대">+</button></div><button id="finish" class="btn coral">읽기 종료</button></div></div><div class="paper-frame concealed" id="paper-frame"><div id="paper-document" class="paper-document ${translated ? "paired-document" : "single-document"}">${documentGroups}</div><div id="focus-cover" role="status">불러오는 중…</div></div></div>`;
     $("#zoom-out").onclick = () => {
       zoom = Math.max(1, zoom - 0.25);
@@ -357,6 +363,17 @@
       passive: true,
     });
     queueLoad(document.querySelector('.source-group[data-page="1"]'));
+  }
+  function documentFlow(sourcePages, translatedPages) {
+    const source = Array.from({ length: sourcePages }, (_, index) => {
+      const page = index + 1;
+      return `<div class="document-group source-group" data-kind="source" data-page="${page}"><div class="page-placeholder">원문 ${page}</div></div>`;
+    }).join("");
+    const translation = Array.from({ length: translatedPages }, (_, index) => {
+      const page = index + 1;
+      return `<div class="document-group translation-sheet" data-kind="translation" data-page="${page}" data-part="1"><div class="page-placeholder">한국어 ${page}</div></div>`;
+    }).join("");
+    return `<section class="document-pair document-flow"><div class="document-side"><h3>원문</h3><div class="source-stack">${source}</div></div><div class="document-side translation-side"><h3>한국어</h3><div class="translation-stack">${translation}</div></div></section>`;
   }
   function queueLoad(group) {
     if (

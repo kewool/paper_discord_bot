@@ -169,7 +169,7 @@ export function createApp(league: League, config: Config) {
       if (!config.translation.enabled)
         throw new AppError(404, "한국어 번역이 비활성화되어 있습니다.");
       if (
-        !/^\d{1,2}$/.test(String(req.params.page)) ||
+        !/^\d{1,3}$/.test(String(req.params.page)) ||
         !/^\d{1,2}$/.test(String(req.query.part ?? "1"))
       )
         throw new AppError(404, "존재하지 않는 번역 페이지입니다.");
@@ -177,15 +177,19 @@ export function createApp(league: League, config: Config) {
       const { paper, attempt } = league.readable(userId);
       const page = Number(req.params.page),
         part = Number(req.query.part ?? "1");
-      if (page < 1 || page > paper.pageCount || part < 1 || part > 32)
+      const versionRow = league.store.get<{ version: string }>(
+        "SELECT version FROM paperTranslations WHERE paperId=? AND status='ready'",
+        paper.id,
+      );
+      if (!versionRow) throw new AppError(409, "한국어 번역을 준비 중입니다.");
+      const maxPage = versionRow.version === "ko-v4" ? 120 : paper.pageCount;
+      if (page < 1 || page > maxPage || part < 1 || part > 32)
         throw new AppError(404, "존재하지 않는 번역 페이지입니다.");
       const translation = league.store.get<{
         partCount: number;
         artifactId: string;
-        version: string;
       }>(
-        `SELECT tp.partCount,tp.artifactId,t.version FROM translatedPages tp JOIN paperTranslations t ON t.paperId=tp.paperId
-       WHERE tp.paperId=? AND tp.page=? AND t.status='ready'`,
+        "SELECT partCount,artifactId FROM translatedPages WHERE paperId=? AND page=?",
         paper.id,
         page,
       );
@@ -196,7 +200,7 @@ export function createApp(league: League, config: Config) {
       const png = await renderPage(paper, page, stamp, {
         artifactId: translation.artifactId,
         part,
-        version: translation.version,
+        version: versionRow.version,
       });
       const fresh = league.readable(userId);
       if (fresh.attempt.id !== attempt.id)

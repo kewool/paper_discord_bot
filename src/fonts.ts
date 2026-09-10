@@ -21,7 +21,7 @@ if (!fontDirectory) {
     "번들 한글 폰트 디렉터리를 찾을 수 없습니다. public/fonts를 배포에 포함해 주세요.",
   );
 }
-const bundledFontDirectory = fontDirectory;
+export const bundledFontDirectory = fontDirectory;
 
 function registerBundledFont(fileName: string): void {
   const fontPath = resolve(bundledFontDirectory, fileName);
