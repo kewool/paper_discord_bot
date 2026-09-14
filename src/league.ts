@@ -51,18 +51,39 @@ export class League {
     const window = roundWindow(this.now(), this.config);
     return this.store.transaction(() => {
       const existing = this.store.getRound(window.day);
+      if (
+        existing &&
+        this.store.get(
+          "SELECT 1 FROM attempts WHERE roundId=? LIMIT 1",
+          existing.id,
+        )
+      )
+        return existing;
+      // Also recover legacy days that rotated papers without anyone opening them.
+      // The first unused assignment after the last participated round carries forward.
+      const carryover = this.store.get<{ paperId: string }>(
+        `SELECT r.paperId FROM rounds r JOIN papers p ON p.id=r.paperId
+         WHERE p.demo=? AND r.opensAt<=? AND r.opensAt>COALESCE((
+           SELECT MAX(used.opensAt) FROM rounds used JOIN papers up ON up.id=used.paperId
+           WHERE up.demo=? AND used.opensAt<=?
+             AND EXISTS(SELECT 1 FROM attempts a WHERE a.roundId=used.id)
+         ),-1)
+         ORDER BY r.opensAt ASC LIMIT 1`,
+        Number(this.config.demo),
+        window.opensAt,
+        Number(this.config.demo),
+        window.opensAt,
+      );
       if (existing) {
-        // Once anyone participates, every submission keeps the same model and rubric.
+        const paperId = carryover?.paperId ?? existing.paperId;
         if (
-          (existing.model !== this.config.model ||
-            existing.rubricVersion !== GRADING_VERSION) &&
-          !this.store.get(
-            "SELECT 1 FROM attempts WHERE roundId=? LIMIT 1",
-            existing.id,
-          )
+          existing.paperId !== paperId ||
+          existing.model !== this.config.model ||
+          existing.rubricVersion !== GRADING_VERSION
         ) {
           this.store.run(
-            "UPDATE rounds SET model=?,rubricVersion=? WHERE id=?",
+            "UPDATE rounds SET paperId=?,model=?,rubricVersion=? WHERE id=?",
+            paperId,
             this.config.model,
             GRADING_VERSION,
             existing.id,
@@ -81,7 +102,10 @@ export class League {
       );
       if (!papers.length) return null;
       const recent = this.store.all<{ paperId: string }>(
-        "SELECT paperId FROM rounds ORDER BY opensAt DESC LIMIT ?",
+        `SELECT r.paperId FROM rounds r
+         WHERE r.opensAt<=? AND EXISTS(SELECT 1 FROM attempts a WHERE a.roundId=r.id)
+         GROUP BY r.paperId ORDER BY MAX(r.opensAt) DESC LIMIT ?`,
+        window.opensAt,
         Math.max(0, papers.length - 1),
       );
       let pool = papers.filter((p) => !recent.some((r) => r.paperId === p.id));
@@ -90,6 +114,7 @@ export class League {
         id: window.day,
         ...window,
         paperId:
+          carryover?.paperId ??
           pool[
             pickWeightedIndex(pool, (paper) => {
               const { tier } = classifyPublication(

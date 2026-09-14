@@ -318,9 +318,11 @@ export async function syncArxiv(
   );
   const unused = league.store.get<{
     count: number;
-  }>(`SELECT COUNT(*) AS count FROM arxivImports ai
-    JOIN papers p ON p.id=ai.paperId LEFT JOIN rounds r ON r.paperId=p.id
-    WHERE ai.status='imported' AND ai.paperId IS NOT NULL AND r.paperId IS NULL`)!.count;
+  }>(`SELECT COUNT(DISTINCT p.id) AS count FROM arxivImports ai
+    JOIN papers p ON p.id=ai.paperId
+    WHERE ai.status='imported' AND NOT EXISTS (
+      SELECT 1 FROM rounds r JOIN attempts a ON a.roundId=r.id WHERE r.paperId=p.id
+    )`)!.count;
   if (
     !options.force &&
     ((state && now - state.lastAttemptAt < HOUR_MS) ||

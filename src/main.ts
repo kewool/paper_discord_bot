@@ -22,6 +22,7 @@ export async function startApplication(config: Config) {
       config.discord.allowedRoleId,
     );
   const league = new League(store, config);
+  league.ensureRound();
   const app = createApp(league, config);
   const server = await new Promise<ReturnType<typeof app.listen>>(
     (resolve, reject) => {
