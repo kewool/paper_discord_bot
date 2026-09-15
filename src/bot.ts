@@ -56,9 +56,7 @@ export function makeCommands(): Array<
     guildCommand(
       new SlashCommandBuilder()
         .setName("submit")
-        .setDescription(
-          "열람이 끝난 논문의 정리를 디스코드 작성 창에서 제출합니다.",
-        ),
+        .setDescription("논문 요약을 자유롭게 작성해 제출합니다."),
     ),
     guildCommand(
       new SlashCommandBuilder()
@@ -289,33 +287,8 @@ async function sendPaperLink(
 }
 
 const submitPrefix = "paper:submit:";
-const summaryFields = [
-  {
-    id: "problem",
-    label: "문제와 핵심 기여",
-    prompt: "어떤 문제를 해결하며 무엇을 새롭게 제안했나요?",
-  },
-  {
-    id: "method",
-    label: "방법론",
-    prompt: "핵심 방법과 실험 설계를 설명해 주세요.",
-  },
-  {
-    id: "findings",
-    label: "결과와 근거",
-    prompt: "주요 결과를 비교 대상과 근거에 연결해 주세요.",
-  },
-  {
-    id: "limits",
-    label: "한계와 비판",
-    prompt: "확인하지 못한 점, 한계와 대안 설명은 무엇인가요?",
-  },
-  {
-    id: "synthesis",
-    label: "나의 종합",
-    prompt: "이 논문에서 얻은 이해와 자신의 생각을 정리해 주세요.",
-  },
-] as const;
+const submissionReceipt =
+  "정리를 접수했습니다. 결과는 /my-score, 순위는 /ranking에서 확인해 주세요.";
 
 function feedbackPreview(text: string, limit: number): string {
   const safe = escapeMarkdown(text).replace(/@/g, "@\u200b");
@@ -448,24 +421,16 @@ export async function handleInteraction(
         .setCustomId(`${submitPrefix}${attempt.id}`)
         .setTitle("오늘의 논문 정리 제출")
         .addLabelComponents(
-          ...summaryFields.map((field, index) =>
-            new LabelBuilder()
-              .setLabel(field.label)
-              .setDescription(
-                index === 0
-                  ? `마감 ${deadline} (${config.timeZone}). 제출문은 Codex로 평가합니다. 각 항목 30~2,300자.`
-                  : field.prompt,
-              )
-              .setTextInputComponent(
-                new TextInputBuilder()
-                  .setCustomId(field.id)
-                  .setStyle(TextInputStyle.Paragraph)
-                  .setMinLength(30)
-                  .setMaxLength(2300)
-                  .setRequired(true)
-                  .setPlaceholder(field.prompt),
-              ),
-          ),
+          new LabelBuilder()
+            .setLabel("요약")
+            .setDescription(`마감 ${deadline} (${config.timeZone})`)
+            .setTextInputComponent(
+              new TextInputBuilder()
+                .setCustomId("summary")
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(true)
+                .setPlaceholder("원하시는 형식으로 논문을 요약해 주세요."),
+            ),
         );
       // A modal must be the initial interaction response, before any defer.
       await interaction.showModal(modal);
@@ -473,25 +438,13 @@ export async function handleInteraction(
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (interaction.isModalSubmit()) {
-      const parts = summaryFields.map((field) => {
-        const value = interaction.fields.getTextInputValue(field.id).trim();
-        if (value.length < 30 || value.length > 2300)
-          throw new AppError(
-            422,
-            `${field.label} 항목을 30~2,300자로 작성해 주세요.`,
-          );
-        return `${field.label}\n${value}`;
-      });
+      const summary = interaction.fields.getTextInputValue("summary");
       league.submit(
         interaction.user.id,
-        parts.join("\n\n"),
+        summary,
         interaction.customId.slice(submitPrefix.length),
       );
-      await interaction.editReply(
-        replyOptions(
-          "정리를 접수했습니다. 한 번 제출한 내용은 수정할 수 없습니다.\n채점 결과와 항목별 피드백은 /my-score, 전체 서버 순위는 /ranking에서 확인해 주세요.",
-        ),
-      );
+      await interaction.editReply(replyOptions(submissionReceipt));
     } else if (interaction.isChatInputCommand()) {
       await handleCommand(interaction, league);
     } else {

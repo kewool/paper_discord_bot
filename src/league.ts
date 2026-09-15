@@ -303,8 +303,7 @@ export class League {
     expectedAttemptId?: string,
   ): AttemptView {
     const clean = summary.trim();
-    if (clean.length < 150 || clean.length > 12000)
-      throw new AppError(422, "정리 내용을 150~12,000자로 작성해 주세요.");
+    if (!clean) throw new AppError(422, "요약 내용을 입력해 주세요.");
     const attempt = this.currentAttempt(userId);
     return this.store.transaction(() => {
       const fresh = this.checkedSubmission(

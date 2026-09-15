@@ -624,14 +624,12 @@ test("Discord modal submission keeps ownership, deadlines, and feedback in Disco
     const modalResponse = calls.at(-1)!.body;
     assert.equal(modalResponse.type, 9);
     const modal = modalResponse.data;
-    assert.equal(modal.components.length, 5);
-    const answers = [
-      "이 자료는 실제 논문이 아닌 가상 교육용 글로, 핵심 주장과 증거를 구분하여 읽는 연습을 제안합니다.",
-      "가상 참가자 열두 명의 읽기 노트 두 조건을 비교하며, 실험 설계와 관찰 결과를 분리합니다.",
-      "구조화된 질문을 사용한 가상 집단의 예시 결과를 제시하지만, 실제 효과의 근거가 될 수 없습니다.",
-      "모든 수치는 학습을 위한 예시이므로 실제 인과관계나 일반화의 근거로 사용해서는 안 됩니다.",
-      "논문의 결론을 그대로 반복하기보다 연구 설계와 관찰 결과가 뒷받침하는 범위를 먼저 따져야 합니다.",
-    ];
+    assert.equal(modal.components.length, 1);
+    assert.doesNotMatch(JSON.stringify(modal), /Codex|2,300|문제와 핵심 기여/);
+    assert.equal(modal.components[0].component.min_length, undefined);
+    assert.equal(modal.components[0].component.max_length, undefined);
+    const answer =
+      "핵심 주장과 증거를 구분하는 읽기 연습입니다.\n\n이 자료는 가상 교육용 글입니다.";
     const submission = {
       custom_id: modal.custom_id,
       components: modal.components.map((field: any, index: number) => ({
@@ -640,7 +638,7 @@ test("Discord modal submission keeps ownership, deadlines, and feedback in Disco
         component: {
           type: 4,
           custom_id: field.component.custom_id,
-          value: answers[index],
+          value: answer,
         },
       })),
     };
@@ -662,7 +660,11 @@ test("Discord modal submission keeps ownership, deadlines, and feedback in Disco
     assert.match(calls.at(-1)!.body.content, /정리를 접수/);
     assert.equal(f.league.currentAttempt(user.id)!.gradingStatus, "queued");
     const saved = f.league.currentAttempt(user.id)!.summary;
-    assert.match(saved!, /핵심 주장과 증거/);
+    assert.equal(
+      saved,
+      answer,
+      "preserve free-form text without generated section headings",
+    );
     await handleInteraction(input(submission, 5), f.league, f.config);
     assert.match(calls.at(-1)!.body.content, /이미 제출/);
     assert.equal(f.league.currentAttempt(user.id)!.summary, saved);
