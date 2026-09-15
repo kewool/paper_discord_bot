@@ -254,6 +254,40 @@ h2 {
   font-size: 13px;
   line-height: 1.7;
 }
+.rubric-guide {
+  margin: 24px 0;
+  padding: 20px 0;
+  border-top: 1px solid var(--line, #e2e5e8);
+  border-bottom: 1px solid var(--line, #e2e5e8);
+  text-align: left;
+}
+.rubric-guide h2,
+.rubric-guide dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.rubric-guide h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+.rubric-guide dl {
+  margin: 0;
+}
+.rubric-guide dl > div {
+  padding: 5px 0;
+  font-size: 14px;
+}
+.rubric-guide dd {
+  margin: 0;
+  white-space: nowrap;
+}
+.rubric-guide p {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
 .login-card {
   text-align: center;
   padding: 42px;

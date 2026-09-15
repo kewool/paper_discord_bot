@@ -38,6 +38,21 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
   holdTranslation = false;
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect(page.getByRole("button", { name: "읽기 시작" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "평가 기준" })).toBeVisible();
+  await expect(page.locator(".rubric-guide dt")).toHaveText([
+    "문제와 핵심 기여",
+    "방법론 이해",
+    "결과와 근거",
+    "한계와 비판적 사고",
+    "정리의 명료성",
+  ]);
+  await expect(page.locator(".rubric-guide dd")).toHaveText([
+    "25점",
+    "25점",
+    "25점",
+    "15점",
+    "10점",
+  ]);
   await expect(page.locator("#demo-banner")).toBeVisible();
   await page.screenshot({ path: "work/browser-ready.png", fullPage: true });
   const other = await browser.newContext();
@@ -204,6 +219,10 @@ test("Discord invitation -> web reading -> permanent focus-loss termination", as
     .toBeLessThanOrEqual(lostFocus.at + 250);
   await expect(page.locator("#discord-handoff")).toBeVisible();
   await expect(page.locator("#discord-handoff")).toContainText("/submit");
+  await expect(page.locator("#discord-handoff .rubric-guide")).toBeVisible();
+  await expect(page.locator("#discord-handoff .rubric-guide dt")).toHaveCount(
+    5,
+  );
   await expect(
     page.locator("form, textarea, #rankings, .grade-total"),
   ).toHaveCount(0);

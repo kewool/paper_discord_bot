@@ -107,6 +107,7 @@ export interface AttemptView {
   grade: Grade | null;
 }
 export interface AppState {
+  rubric: typeof RUBRIC;
   serverNow: number;
   demo: boolean;
   authenticated: boolean;

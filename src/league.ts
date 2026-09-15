@@ -10,6 +10,7 @@ import {
 } from "./paper-selection.js";
 import {
   GRADING_VERSION,
+  RUBRIC,
   type AppState,
   type Attempt,
   type AttemptView,
@@ -388,6 +389,7 @@ export class League {
         : undefined;
     return {
       serverNow: this.now(),
+      rubric: RUBRIC,
       demo: this.config.demo,
       authenticated: Boolean(user),
       discordUrl:

@@ -258,7 +258,7 @@
         tr && tr.status !== "disabled" && tr.status !== "ready"
           ? `<p class="translation-progress">${tr.status === "failed" ? "번역 재시도 대기" : "번역 준비 중"} · ${Number(tr.readyPages) || 0} / ${Number(tr.totalPages) || 0}쪽</p>`
           : "";
-      reader.innerHTML = `<div class="card ready-card"><h1>오늘의 논문</h1><p class="lede">읽기 ${Number(r.readingMinutes) || 0}분 · 작성 ${Number(r.writingMinutes) || 0}분</p><p class="rules">이 화면을 벗어나면 열람이 종료되며 다시 볼 수 없습니다.</p>${progress}<button id="start" class="btn coral" ${translationReady ? "" : "disabled"}>읽기 시작</button></div>`;
+      reader.innerHTML = `<div class="card ready-card"><h1>오늘의 논문</h1><p class="lede">읽기 ${Number(r.readingMinutes) || 0}분 · 작성 ${Number(r.writingMinutes) || 0}분</p><p class="rules">이 화면을 벗어나면 열람이 종료되며 다시 볼 수 없습니다.</p>${rubricGuide()}${progress}<button id="start" class="btn coral" ${translationReady ? "" : "disabled"}>읽기 시작</button></div>`;
       $("#start").onclick = () => busy("#start", start);
       return;
     }
@@ -266,8 +266,7 @@
       recordedEnd(a.id) !== null &&
       (a.phase === "reading" || !confirmedEnds.has(a.id))
     ) {
-      reader.innerHTML =
-        '<div id="focus-ended" class="status-card card"><h1>열람 종료</h1><p>화면을 벗어나 열람이 종료되었습니다. 다시 볼 수 없습니다.</p><p class="muted">연결 복구 후 제출 마감을 확인합니다.</p></div>';
+      reader.innerHTML = `<div id="focus-ended" class="status-card card"><h1>열람 종료</h1><p>화면을 벗어나 열람이 종료되었습니다. 다시 볼 수 없습니다.</p><p class="muted">연결 복구 후 제출 마감을 확인합니다.</p>${rubricGuide()}</div>`;
     } else if (a.phase === "reading") reading(a);
     else handoff(a);
   }
@@ -567,11 +566,23 @@
       msg(e.message);
     }
   }
+  function rubricGuide() {
+    const criteria = state?.rubric;
+    if (!Array.isArray(criteria) || !criteria.length) return "";
+    const rows = criteria
+      .map(
+        (item) =>
+          `<div><dt>${esc(item.label)}</dt><dd>${Number(item.max)}점</dd></div>`,
+      )
+      .join("");
+    const total = criteria.reduce((sum, item) => sum + Number(item.max), 0);
+    return `<section class="rubric-guide" aria-label="평가 기준"><h2>평가 기준 <span>${total}점</span></h2><dl>${rows}</dl><p>요약은 항목을 나누지 않고 자유롭게 작성하셔도 됩니다.</p></section>`;
+  }
   function handoff(a) {
     const left = a.submitBy - (state.serverNow + (performance.now() - sync));
     const expired = left <= 0,
       done = ["queued", "grading", "graded", "failed"].includes(a.phase);
-    reader.innerHTML = `<div id="discord-handoff" class="status-card card"><h1>${expired && !done ? "제출 마감" : "열람 종료"}</h1>${done ? "<p>Discord <strong>/my-score</strong>에서 결과를 확인해 주세요.</p>" : expired ? "" : '<p>Discord <strong>/submit</strong>으로 제출해 주세요.</p><strong id="timer" class="timer"></strong>'}</div>`;
+    reader.innerHTML = `<div id="discord-handoff" class="status-card card"><h1>${expired && !done ? "제출 마감" : "열람 종료"}</h1>${done ? "<p>Discord <strong>/my-score</strong>에서 결과를 확인해 주세요.</p>" : expired ? "" : '<p>Discord <strong>/submit</strong>으로 제출해 주세요.</p><strong id="timer" class="timer"></strong>'}${rubricGuide()}</div>`;
   }
   function tick() {
     if (focused && (!document.hasFocus() || document.hidden)) conceal();
